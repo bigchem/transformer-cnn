@@ -11,15 +11,12 @@ import tarfile
 import shutil
 import math
 
-#import matplotlib.pyplot as plt
-#import matplotlib.lines as mlines
-
 from rdkit import Chem
 from layers import PositionLayer, MaskLayerLeft, \
                    MaskLayerRight, MaskLayerTriangular, \
                    SelfLayer, LayerNormalization
 
-version = 2;
+version = 3;
 print("Version: ", version);
 
 if(len (sys.argv) != 2):
@@ -31,45 +28,22 @@ print("Load config file: ", sys.argv[1]);
 config = configparser.ConfigParser();
 config.read(sys.argv[1]);
 
-TRAIN = config["Task"]["train_mode"];
-MODEL_FILE = config["Task"]["model_file"];
+def getConfig(section, attribute, default=""):
+    try:
+        return config[section][attribute];
+    except:
+        return default;
 
-try:
-   TRAIN_FILE = config["Task"]["train_data_file"];
-except:
-   TRAIN_FILE = "";
-
-try:
-   APPLY_FILE = config["Task"]["apply_data_file"];
-   RESULT_FILE = config["Task"]["result_file"];
-except:
-   APPLY_FILE = "train.csv";
-   RESULT_FILE = "results.csv";
-
-try:
-   NUM_EPOCHS = int(config["Details"]["n_epochs"]);
-except:
-   NUM_EPOCS = 100;
-
-try:
-   BATCH_SIZE = int(config["Details"]["batch_size"]);
-except:
-   BATCH_SIZE = 32;
-
-try:
-   SEED = int(config["Details"]["seed"]);
-except:
-   SEED = 657488;
-
-
-CANONIZE = config["Details"]["canonize"];
-DEVICE = config["Details"]["gpu"];
-
-try:
-   EARLY_STOPPING = float(config["Details"]["early-stopping"]);
-except:
-   EARLY_STOPPING = 0.1;
-
+TRAIN = getConfig("Task","train_mode");
+MODEL_FILE = getConfig("Task","model_file");
+TRAIN_FILE = getConfig("Task","train_data_file");
+APPLY_FILE = getConfig("Task","apply_data_file", "train.csv");
+RESULT_FILE = getConfig("Task","result_file", "results.csv");
+NUM_EPOCHS = int(getConfig("Details","n_epochs", "100"));
+BATCH_SIZE = int(getConfig("Details","batch_size", "32"));
+SEED = int(getConfig("Details","seed", "657488"));
+CANONIZE = getConfig("Details","canonize");
+DEVICE = getConfig("Details","gpu");
 
 os.environ["CUDA_VISIBLE_DEVICES"] = DEVICE;
 
@@ -77,7 +51,7 @@ N_HIDDEN = 512;
 N_HIDDEN_CNN = 512;
 EMBEDDING_SIZE = 64;
 KEY_SIZE = EMBEDDING_SIZE;
-SEQ_LENGTH = 512;
+SEQ_LENGTH = 256;
 
 #our vocabulary
 chars = " ^#%()+-./0123456789=@ABCDEFGHIKLMNOPRSTVXYZ[\\]abcdefgilmnoprstuy$";
@@ -199,7 +173,6 @@ def auc(data):
    S *= 0.5;
    return round(S,4);
 
-
 def optimal_threshold(data):
 
    ot1 = 0.0;
@@ -251,7 +224,6 @@ def auc_acc(data):
    v_tnt = tnt(data, v_ot);
 
    return v_auc, v_tnt[4], v_ot;
-
 
 class suppress_stderr(object):
    def __init__(self):
@@ -340,8 +312,10 @@ def gen_data(data, nettype="regression"):
     if nl >= SEQ_LENGTH:
         raise Exception("Input string is too long.");
 
-    x = np.zeros((batch_size, SEQ_LENGTH), np.int8);
-    mx = np.zeros((batch_size, SEQ_LENGTH), np.int8);
+    nl = nl + 60;
+
+    x = np.zeros((batch_size, nl), np.int8);
+    mx = np.zeros((batch_size, nl), np.int8);
     z = np.zeros((batch_size) if (nettype == "regression") else (batch_size, 2), np.float32);
 
     for cnt in range(batch_size):
@@ -358,7 +332,6 @@ def gen_data(data, nettype="regression"):
 
     return [x, mx], z;
 
-
 def data_generator(ds, nettype = "regression"):
 
    data = [];
@@ -371,58 +344,15 @@ def data_generator(ds, nettype = "regression"):
       if len(data) > 0:
          yield gen_data(data, nettype);
          data = [];
+         raise StopIteration();
 
-LSTM_SIZE = 256;
-DA_SIZE = 64;   #parameter Da in the article
-R_SIZE = 32;     #parameter R in the article
+def buildNetwork(nettype):
 
-class SelfBiLayer(tf.keras.layers.Layer):
-
-    def __init__(self, **kwargs):
-        self.denom = math.sqrt(EMBEDDING_SIZE);
-        super(SelfBiLayer, self).__init__(**kwargs);
-
-    def build(self, input_shape):
-
-        self.W1 = self.add_weight( shape =(DA_SIZE, EMBEDDING_SIZE),
-                                name="W1", trainable = True,
-                                initializer = 'glorot_uniform');
-        self.W2 = self.add_weight( shape =(R_SIZE, DA_SIZE),
-                                name="W2", trainable = True,
-                                initializer = 'glorot_uniform');
-        super(SelfBiLayer, self).build(input_shape);
-
-    def call(self, inputs):
-
-        x = inputs[0];
-        mask = inputs[1];
-
-        x = tf.transpose(x, (2,0,1)) * mask;
-        x = tf.transpose(x, (1,2,0));
-
-        #in the article: softmax(W2 * tanh( W1 * H^T)) * H
-        Q = tf.tensordot(self.W1, tf.transpose(x, (0,2,1)), axes = [[1], [1]]);
-        Q = tf.math.tanh(Q);
-        Q = tf.tensordot(self.W2, Q, axes = [[1], [0]]);
-
-        A = tf.exp(Q) * mask;
-        A = tf.transpose(A, (1,0,2));
-
-        A = A / tf.reshape( tf.reduce_sum(A, axis = 2), (-1, R_SIZE ,1));
-        A = layers.Dropout(rate = 0.1) (A);
-
-        return tf.keras.backend.batch_dot( A, x);
-
-    def compute_output_shape(self, input_shape):
-        return (input_shape[0], R_SIZE, EMBEDDING_SIZE);
-
-
-def buildNetwork(unfreeze, nettype):
-
+    unfreeze = False;
     n_block, n_self = 3, 10;
 
-    l_in = layers.Input( shape= (SEQ_LENGTH,));
-    l_mask = layers.Input( shape= (SEQ_LENGTH,));
+    l_in = layers.Input( shape= (None,));
+    l_mask = layers.Input( shape= (None,));
 
     #transformer part
     #positional encodings for product and reagents, respectively
@@ -453,6 +383,7 @@ def buildNetwork(unfreeze, nettype):
 
     #end of Transformer's part
     l_encoder = l_embed;
+    l_in2 = layers.Input( shape= (None, EMBEDDING_SIZE));
 
     #text-cnn part
     #https://github.com/deepchem/deepchem/blob/b7a6d3d759145d238eb8abaf76183e9dbd7b683c/deepchem/models/tensorgraph/models/text_cnn.py
@@ -462,18 +393,13 @@ def buildNetwork(unfreeze, nettype):
 
     l_pool = [];
     for i in range(len(kernel_sizes)):
-       l_conv = layers.Conv1D(num_filters[i], kernel_size=kernel_sizes[i], padding='valid', kernel_initializer='normal', activation='relu')(l_encoder);
+       l_conv = layers.Conv1D(num_filters[i], kernel_size=kernel_sizes[i], padding='valid',
+                              kernel_initializer='normal', activation='relu')(l_in2);
        l_maxpool = layers.Lambda(lambda x: tf.reduce_max(x, axis=1))(l_conv);
        l_pool.append(l_maxpool);
 
     l_cnn = layers.Concatenate(axis=1)(l_pool);
     l_cnn_drop = layers.Dropout(rate = 0.25)(l_cnn);
-
-    '''
-    l_self = SelfBiLayer()([l_encoder, l_mask]);
-    l_self_drop = layers.Dropout(rate=0.1)(l_self);
-    l_self_flat = layers.Flatten()(l_self_drop);
-    '''
 
     #dense part
     l_dense =layers.Dense(N_HIDDEN_CNN, activation='relu') (l_cnn_drop);
@@ -481,51 +407,48 @@ def buildNetwork(unfreeze, nettype):
     #https://github.com/ParikhKadam/Highway-Layer-Keras
     transform_gate = layers.Dense(units= N_HIDDEN_CNN, activation="sigmoid",
                      bias_initializer=tf.keras.initializers.Constant(-1))(l_dense);
+
     carry_gate = layers.Lambda(lambda x: 1.0 - x, output_shape=(N_HIDDEN_CNN,))(transform_gate);
     transformed_data = layers.Dense(units= N_HIDDEN_CNN, activation="relu")(l_dense);
     transformed_gated = layers.Multiply()([transform_gate, transformed_data]);
     identity_gated = layers.Multiply()([carry_gate, l_dense]);
+
     l_highway = layers.Add()([transformed_gated, identity_gated]);
 
     if nettype == "regression":
        l_out = layers.Dense(1, activation='linear', name="Regression") (l_highway);
-       mdl = tf.keras.Model([l_in, l_mask], l_out);
+       mdl = tf.keras.Model([l_in2], l_out);
        mdl.compile (optimizer = 'adam', loss = 'mse', metrics=['mse'] );
     else:
        l_out = layers.Dense(2, activation='softmax', name="Classification") (l_highway);
-       mdl = tf.keras.Model([l_in, l_mask], l_out);
+       mdl = tf.keras.Model([l_in2], l_out);
        mdl.compile (optimizer = 'adam', loss = 'binary_crossentropy', metrics=['acc'] );
 
-    #auxiliary model fomr the Encoder part of Transformer
-    if unfreeze == False:
-       mdl2 = tf.keras.Model([l_in, l_mask], l_encoder);
-       mdl2.set_weights(np.load("embeddings.npy", allow_pickle=True));
+    encoder = tf.keras.Model([l_in, l_mask], l_encoder);
+    encoder.compile(optimizer = 'adam', loss = 'mse');
+    encoder.set_weights(np.load("embeddings.npy"));
 
-    K.set_value(mdl.optimizer.lr, 1e-4);
+    return mdl, encoder;
 
-    #plot_model(mdl, to_file='model.png', show_shapes=True);
-    #mdl.summary();
-
-    return mdl;
 
 if __name__ == "__main__":
 
     device_str = "GPU" + str(DEVICE);
 
     if TRAIN == "True":
-
         print("Analyze training file...");
 
         DS, info = analyzeDescrFile(TRAIN_FILE);
         nettype = info[0];
 
-        mdl = buildNetwork(False, nettype);
+        mdl, encoder = buildNetwork(nettype);
 
         nall = len(DS);
         print("Number of all points: ", nall);
         inds = np.arange(nall);
+        #np.random.shuffle(inds);
 
-        ntrain = int( (1.0-EARLY_STOPPING) * nall);
+        ntrain = int(0.9 * nall);
 
         print("Trainig samples:", ntrain, "validation:", nall - ntrain);
         inds_train = inds[:ntrain];
@@ -533,13 +456,29 @@ if __name__ == "__main__":
 
         DS_train = [DS[x] for x in inds_train];
         DS_valid = [DS[x] for x in inds_valid];
-        DS_all =   [DS[x] for x in inds];
 
         train_generator = data_generator(DS_train, nettype);
         valid_generator = data_generator(DS_valid, nettype);
-        all_generator   = data_generator(DS_all, nettype);
 
-        rmse_training = -1.0;
+        DSC_TRAIN = [];
+        DSC_VALID = [];
+
+        #calculate "descriptors"
+        for x, y in train_generator:
+           z = encoder.predict(x);
+           DSC_TRAIN.append((z, y));
+
+        for x, y in valid_generator:
+           z = encoder.predict(x);
+           DSC_VALID.append((z, y));
+
+        def data_generator2(dsc):
+           while True:
+              for i in range(len(dsc)):
+                 yield dsc[i][0], dsc[i][1];
+
+        train_generator = data_generator2(DSC_TRAIN);
+        valid_generator = data_generator2(DSC_VALID);
 
         class MessagerCallback(tf.keras.callbacks.Callback):
 
@@ -548,12 +487,12 @@ if __name__ == "__main__":
               self.warm = 64;
               self.tuning = tuning;
 
-              self.early_max = 0.1 * NUM_EPOCHS;
+              self.early_max = 0.2 * NUM_EPOCHS;
               self.early_best = 0.0;
               self.early_count = 0;
 
-              self.valid_gen = data_generator(DS_valid, nettype);
-              self.train_gen = data_generator(DS_train, nettype);
+              self.valid_gen = data_generator2(DSC_VALID);
+              self.train_gen = data_generator2(DSC_TRAIN);
 
            def on_batch_begin(self, batch, logs={}):
               self.steps += 1;
@@ -562,13 +501,12 @@ if __name__ == "__main__":
               K.set_value(self.model.optimizer.lr, lr);
 
            def on_epoch_end(self, epoch, logs={}):
-
               if nettype == "regression":
 
                  y_pred = [];
                  y_real = [];
 
-                 for batch in range(int(math.ceil( (nall - ntrain) / BATCH_SIZE))):
+                 for batch in range(len(DSC_VALID)):
                     x,y = next(self.valid_gen);
                     p = self.model.predict(x);
                     for i in range(y.shape[0]):
@@ -580,7 +518,7 @@ if __name__ == "__main__":
                  y_pred = [];
                  y_real = [];
 
-                 for batch in range(int(math.ceil( ntrain / BATCH_SIZE))):
+                 for batch in range(len(DSC_TRAIN)):
                     x,y = next(self.train_gen);
                     p = self.model.predict(x);
                     for i in range(y.shape[0]):
@@ -594,13 +532,10 @@ if __name__ == "__main__":
                  early = round(rmse_v,3);
                  if(epoch == 0):
                      self.early_best = early;
-                     global rmse_training;
-                     rmse_training = rmse_t;
                  else:
                      if early < self.early_best :
                          self.early_count = 0;
                          self.early_best = early;
-                         rmse_training = rmse_t;
                      else:
                          self.early_count += 1;
                          if self.early_count > self.early_max:
@@ -613,43 +548,12 @@ if __name__ == "__main__":
               if os.path.exists("stop"):
                  self.model.stop_training = True;
               return;
-        #
-        class MessagerCallback2(tf.keras.callbacks.Callback):
-
-           def __init__(self, **kwargs):
-              self.all_gen = data_generator(DS_all, nettype);
-
-           def on_epoch_end(self, epoch, logs={}):
-
-              if nettype == "regression":
-
-                 y_pred = [];
-                 y_real = [];
-
-                 for batch in range(int(math.ceil( (nall - ntrain) / BATCH_SIZE))):
-                    x,y = next(self.all_gen);
-                    p = self.model.predict(x);
-                    for i in range(y.shape[0]):
-                       y_real.append((y[i] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
-                       y_pred.append((p[i,0] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
-
-                 r2, rmse_t = calcStatistics(y_pred, y_real);
-                 global rmse_training;
-                 if rmse_t < rmse_training:
-                     rmse_training = rmse_t;
-
-                 print("MESSAGE: train score: {} at epoch: {} {} ".format(round (rmse_t, 3), epoch +1, device_str));
-              else:
-                 print("MESSAGE: train score: {} at epoch: {} {} ".format(round(float(logs["loss"]), 3), epoch +1, device_str));
-
-              return;
-
 
         history = mdl.fit_generator( generator = train_generator,
-                     steps_per_epoch = int(math.ceil( ntrain / BATCH_SIZE)),
+                     steps_per_epoch = len(DSC_TRAIN),
                      epochs = NUM_EPOCHS,
                      validation_data = valid_generator,
-                     validation_steps = int(math.ceil( (nall - ntrain) / BATCH_SIZE)),
+                     validation_steps = len(DSC_VALID),
                      use_multiprocessing=False,
                      shuffle = True,
                      verbose = 0,
@@ -659,43 +563,12 @@ if __name__ == "__main__":
                                    MessagerCallback(tuning = False)]);
 
         mdl.load_weights("model/"); # restoring best saved model
-        #mdl.save_weights("final.h5");
-
-        rmse_1 = rmse_training;
-        print("RMSE 1: ", rmse_1);
-
-        #additional training
-        add_epochs = int( len(history.history["val_loss"]) / 10.0);
-        if add_epochs < NUM_EPOCHS/20: # at least 5% of iterations
-            add_epochs = NUM_EPOCHS/20
-
-        if add_epochs < 5: # or at least five iterations
-            add_epochs = 5
-
-        history = mdl.fit_generator( generator = all_generator,
-                     steps_per_epoch = int(math.ceil( nall / BATCH_SIZE)),
-                     epochs = add_epochs,
-                     use_multiprocessing=False,
-                     shuffle = True,
-                     verbose = 0,
-                     callbacks = [ MessagerCallback2(),
-                                   ModelCheckpoint("model/", monitor='loss',
-                                            save_best_only= True, save_weights_only= True,
-                                            mode='auto', period=1)]);
-        mdl.load_weights("model/");               
         mdl.save_weights("model.h5");
-
-        print("RMSE 2: ", rmse_training);
-        #if rmse_training < rmse_1:
-        #   print("Additional training matters.");
-        #   mdl.save_weights("model.h5");
-        #else:
-        #   print("Additional training sucks.");
 
         y_pred = [];
         y_real = [];
 
-        for i in range( int(math.ceil( (nall - ntrain) / BATCH_SIZE))):
+        for i in range( len(DSC_VALID) ):
           d, z = next(valid_generator);
           if nettype == "regression":
              y = (mdl.predict(d) - 0.9) / 0.8 * (info[2] - info[1]) + info[2];
@@ -741,7 +614,7 @@ if __name__ == "__main__":
        info = info.replace("]", "").split(",");
 
        nettype = info[0].strip();
-       mdl = buildNetwork(True, nettype);
+       mdl, encoder = buildNetwork(nettype);
        mdl.load_weights("model.h5");
 
        if nettype == "regression":
@@ -783,11 +656,11 @@ if __name__ == "__main__":
 
           x, y = gen_data(d, nettype);
           if nettype == "regression":
-             y = np.mean(mdl.predict(x));
+             y = np.mean(mdl.predict( encoder.predict(x) ));
              y = (y - 0.9) / 0.8 * (info[2] - info[1]) + info[2];
              print(y, file=fp);
           else:
-             y = np.mean(mdl.predict(x)[:,1]);
+             y = np.mean(mdl.predict(encoder.predict(x))[:,1]);
              print(y, 1 if y >= info[1] else 0,file=fp);
 
 
