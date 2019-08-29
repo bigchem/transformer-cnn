@@ -44,6 +44,10 @@ BATCH_SIZE = int(getConfig("Details","batch_size", "32"));
 SEED = int(getConfig("Details","seed", "657488"));
 CANONIZE = getConfig("Details","canonize");
 DEVICE = getConfig("Details","gpu");
+EARLY_STOPPING = float(getConfig("Details", "early_sopping", "0.9"));
+AVERAGING = int(getConfig("Details", "averaging", "5"));
+
+FIRST_LINE = False
 
 os.environ["CUDA_VISIBLE_DEVICES"] = DEVICE;
 
@@ -264,7 +268,7 @@ def findBoundaries(DS):
 
 def analyzeDescrFile(fname):
 
-    first_row = True;
+    first_row = FIRST_LINE;
 
     DS = [];
     ind_mol = 0;
@@ -445,59 +449,76 @@ if __name__ == "__main__":
 
         nall = len(DS);
         print("Number of all points: ", nall);
+
         inds = np.arange(nall);
-        #np.random.shuffle(inds);
-
-        ntrain = int(0.9 * nall);
-
-        print("Trainig samples:", ntrain, "validation:", nall - ntrain);
-        inds_train = inds[:ntrain];
-        inds_valid = inds[ntrain:];
-
-        DS_train = [DS[x] for x in inds_train];
-        DS_valid = [DS[x] for x in inds_valid];
-
-        train_generator = data_generator(DS_train, nettype);
-        valid_generator = data_generator(DS_valid, nettype);
-
-        DSC_TRAIN = [];
-        DSC_VALID = [];
-
-        #calculate "descriptors"
-        for x, y in train_generator:
-           z = encoder.predict(x);
-           DSC_TRAIN.append((z, y));
-
-        for x, y in valid_generator:
-           z = encoder.predict(x);
-           DSC_VALID.append((z, y));
 
         def data_generator2(dsc):
            while True:
               for i in range(len(dsc)):
                  yield dsc[i][0], dsc[i][1];
 
-        train_generator = data_generator2(DSC_TRAIN);
-        valid_generator = data_generator2(DSC_VALID);
+        if EARLY_STOPPING == 0:
+           np.random.shuffle(inds);
+
+           d = [DS[x] for x in inds];
+           all_generator = data_generator(d, nettype);
+
+           DSC_ALL = [];
+           for x, y in all_generator:
+               z = encoder.predict(x);
+               DSC_ALL.append((z, y));
+
+           all_generator = data_generator2(DSC_ALL);
+
+        else:
+           np.random.shuffle(inds);
+           ntrain = int(EARLY_STOPPING * nall);
+
+           print("Trainig samples:", ntrain, "validation:", nall - ntrain);
+           inds_train = inds[:ntrain];
+           inds_valid = inds[ntrain:];
+
+           DS_train = [DS[x] for x in inds_train];
+           DS_valid = [DS[x] for x in inds_valid];
+
+           train_generator = data_generator(DS_train, nettype);
+           valid_generator = data_generator(DS_valid, nettype);
+
+           DSC_TRAIN = [];
+           DSC_VALID = [];
+
+           #calculate "descriptors"
+           for x, y in train_generator:
+              z = encoder.predict(x);
+              DSC_TRAIN.append((z, y));
+
+           for x, y in valid_generator:
+              z = encoder.predict(x);
+              DSC_VALID.append((z, y));
+
+           train_generator = data_generator2(DSC_TRAIN);
+           valid_generator = data_generator2(DSC_VALID);
 
         class MessagerCallback(tf.keras.callbacks.Callback):
 
-           def __init__(self, tuning = False, **kwargs):
+           def __init__(self, **kwargs):
               self.steps = 0;
               self.warm = 64;
-              self.tuning = tuning;
 
-              self.early_max = 0.2 * NUM_EPOCHS;
+              self.early_max = 0.2 * NUM_EPOCHS if EARLY_STOPPING > 0 else NUM_EPOCHS;
               self.early_best = 0.0;
               self.early_count = 0;
 
-              self.valid_gen = data_generator2(DSC_VALID);
-              self.train_gen = data_generator2(DSC_TRAIN);
+              if EARLY_STOPPING > 0:
+                 self.valid_gen = data_generator2(DSC_VALID);
+                 self.train_gen = data_generator2(DSC_TRAIN);
+              else:
+                 self.train_gen = data_generator2(DSC_ALL);
 
            def on_batch_begin(self, batch, logs={}):
               self.steps += 1;
               lr = 1.0 * min(1.0, self.steps / self.warm) / max(self.steps, self.warm);
-              if lr < 1e-4 or self.tuning == True: lr = 1e-4;
+              if lr < 1e-4 : lr = 1e-4;
               K.set_value(self.model.optimizer.lr, lr);
 
            def on_epoch_end(self, epoch, logs={}):
@@ -506,50 +527,74 @@ if __name__ == "__main__":
                  y_pred = [];
                  y_real = [];
 
-                 for batch in range(len(DSC_VALID)):
-                    x,y = next(self.valid_gen);
-                    p = self.model.predict(x);
-                    for i in range(y.shape[0]):
-                       y_real.append((y[i] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
-                       y_pred.append((p[i,0] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
+                 if EARLY_STOPPING > 0:
+                    for batch in range(len(DSC_VALID)):
+                       x,y = next(self.valid_gen);
+                       p = self.model.predict(x);
+                       for i in range(y.shape[0]):
+                          y_real.append((y[i] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
+                          y_pred.append((p[i,0] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
+                    r2, rmse_v = calcStatistics(y_pred, y_real);
 
-                 r2, rmse_v = calcStatistics(y_pred, y_real);
+                    y_pred = [];
+                    y_real = [];
 
-                 y_pred = [];
-                 y_real = [];
+                    for batch in range(len(DSC_TRAIN)):
+                       x,y = next(self.train_gen);
+                       p = self.model.predict(x);
+                       for i in range(y.shape[0]):
+                          y_real.append((y[i] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
+                          y_pred.append((p[i,0] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
 
-                 for batch in range(len(DSC_TRAIN)):
-                    x,y = next(self.train_gen);
-                    p = self.model.predict(x);
-                    for i in range(y.shape[0]):
-                       y_real.append((y[i] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
-                       y_pred.append((p[i,0] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
+                    r2, rmse_t = calcStatistics(y_pred, y_real);
+                    print("MESSAGE: train score: {} / validation score: {} / at epoch: {} {} ".format(round (rmse_t, 3),
+                           round(rmse_v, 3), epoch +1, device_str));
 
-                 r2, rmse_t = calcStatistics(y_pred, y_real);
-                 print("MESSAGE: train score: {} / validation score: {} / at epoch: {} {} ".format(round (rmse_t, 3),
-                       round(rmse_v, 3), epoch +1, device_str));
-
-                 early = round(rmse_v,3);
-                 if(epoch == 0):
-                     self.early_best = early;
-                 else:
-                     if early < self.early_best :
-                         self.early_count = 0;
-                         self.early_best = early;
-                     else:
-                         self.early_count += 1;
-                         if self.early_count > self.early_max:
+                    early = round(rmse_v,3);
+                    if(epoch == 0):
+                       self.early_best = early;
+                    else:
+                       if early < self.early_best :
+                          self.early_count = 0;
+                          self.early_best = early;
+                       else:
+                          self.early_count += 1;
+                          if self.early_count > self.early_max:
                              self.model.stop_training = True;
-                             return;
+                          return;
+
+                 else:
+                     y_pred = [];
+                     y_real = [];
+
+                     for batch in range(len(DSC_ALL)):
+                        x,y = next(self.train_gen);
+                        p = self.model.predict(x);
+                        for i in range(y.shape[0]):
+                           y_real.append((y[i] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
+                           y_pred.append((p[i,0] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
+
+                     r2, rmse_t = calcStatistics(y_pred, y_real);
+                     print("MESSAGE: train score: {} / at epoch: {} {} ".format(round (rmse_t, 3),
+                           epoch + 1, device_str));
+
               else:
-                 print("MESSAGE: train score: {} / validation score: {} / at epoch: {} {} ".format(round(float(logs["loss"]), 3),
-                       round(float(logs["val_loss"]), 3), epoch +1, device_str));
+                 if EARLY_STOPPING > 0:
+                    print("MESSAGE: train score: {} / validation score: {} / at epoch: {} {} ".format(round(float(logs["loss"]), 3),
+                          round(float(logs["val_loss"]), 3), epoch +1, device_str));
+                 else:
+                    print("MESSAGE: train score: {} / at epoch: {} {} ".format(round(float(logs["loss"]), 3),
+                          epoch +1, device_str));
+
+              if EARLY_STOPPING == 0 and epoch >= (NUM_EPOCHS - AVERAGING-1):
+                  self.model.save_weights("e-" + str(epoch) + ".h5");
 
               if os.path.exists("stop"):
                  self.model.stop_training = True;
               return;
 
-        history = mdl.fit_generator( generator = train_generator,
+        if EARLY_STOPPING > 0:
+           history = mdl.fit_generator( generator = train_generator,
                      steps_per_epoch = len(DSC_TRAIN),
                      epochs = NUM_EPOCHS,
                      validation_data = valid_generator,
@@ -560,34 +605,45 @@ if __name__ == "__main__":
                      callbacks = [ ModelCheckpoint("model/", monitor='val_loss',
                                         save_best_only= True, save_weights_only= True,
                                         mode='auto', period=1),
-                                   MessagerCallback(tuning = False)]);
+                                   MessagerCallback()]);
 
-        mdl.load_weights("model/"); # restoring best saved model
-        mdl.save_weights("model.h5");
+           mdl.load_weights("model/");   #restoring best saved model
+           mdl.save_weights("model.h5");
 
-        y_pred = [];
-        y_real = [];
+        else:
+           history = mdl.fit_generator( generator = all_generator,
+                     steps_per_epoch = len(DSC_ALL),
+                     epochs = NUM_EPOCHS,
+                     use_multiprocessing=False,
+                     shuffle = True,
+                     verbose = 0,
+                     callbacks = [MessagerCallback()]);
 
-        for i in range( len(DSC_VALID) ):
-          d, z = next(valid_generator);
-          if nettype == "regression":
-             y = (mdl.predict(d) - 0.9) / 0.8 * (info[2] - info[1]) + info[2];
-          else:
-             y = mdl.predict(d);
+           print("Averaging weights");
+           f = [];
 
-          for j in range(y.shape[0]):
-             y_pred.append(y[j, 0 if nettype == "regression" else 1]);
-             y_real.append(((z[j] - 0.9) /0.8 * (info[2] - info[1]) + info[2]) if nettype == "regression" else z[j, 1]);
+           for i in range(NUM_EPOCHS - AVERAGING-1, NUM_EPOCHS):
+              f.append(h5py.File("e-" + str(i) + ".h5", "r+"));
 
-        if nettype == "classification":
+           keys = list(f[0].keys());
+           for key in keys:
+              groups = list(f[0][key]);
+              if len(groups):
+                 for group in groups:
+                    items = list(f[0][key][group].keys());
+                    for item in items:
+                       data = [];
+                       for i in range(len(f)):
+                          data.append(f[i][key][group][item]);
+                       avg = np.mean(data, axis = 0);
+                       del f[0][key][group][item];
+                       f[0][key][group].create_dataset(item, data=avg);
+           for fp in f:
+              fp.close();
 
-           auc, acc, ot = auc_acc( list(zip(y_pred, y_real)) );
-           print("Done classification (auc, acc): ", auc, acc, ot);
-
-           info.append(ot);
-
-           sp = spc(list(zip( y_pred, y_real)));
-           fpr, tpr, _ = zip(*sp);
+           for i in range(NUM_EPOCHS - AVERAGING, NUM_EPOCHS):
+              os.remove("e-" + str(i) + ".h5");
+           os.rename("e-" + str(NUM_EPOCHS - AVERAGING-1) + ".h5", "model.h5");
 
         fp = open("model.txt", "w");
         print(info, file=fp);
@@ -598,7 +654,9 @@ if __name__ == "__main__":
         tar.add("model.h5");
         tar.close();
 
-        shutil.rmtree("model/");
+        if EARLY_STOPPING > 0:
+           shutil.rmtree("model/");
+
         os.remove("model.txt");
         os.remove("model.h5");
 
@@ -623,7 +681,7 @@ if __name__ == "__main__":
        else:
           info[1] = float(info[1]);
 
-       first_row = True;
+       first_row = FIRST_LINE;
        DS = [];
 
        fp = open(RESULT_FILE, "w");
