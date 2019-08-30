@@ -471,7 +471,7 @@ if __name__ == "__main__":
            all_generator = data_generator2(DSC_ALL);
 
         else:
-           np.random.shuffle(inds);
+           #np.random.shuffle(inds);
            ntrain = int(EARLY_STOPPING * nall);
 
            print("Trainig samples:", ntrain, "validation:", nall - ntrain);
