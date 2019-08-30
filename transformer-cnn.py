@@ -348,7 +348,8 @@ def data_generator(ds, nettype = "regression"):
       if len(data) > 0:
          yield gen_data(data, nettype);
          data = [];
-         raise StopIteration();
+         break;
+      raise StopIteration();
 
 def buildNetwork(nettype):
 
