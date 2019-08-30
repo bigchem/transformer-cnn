@@ -430,7 +430,7 @@ def buildNetwork(nettype):
 
     encoder = tf.keras.Model([l_in, l_mask], l_encoder);
     encoder.compile(optimizer = 'adam', loss = 'mse');
-    encoder.set_weights(np.load("embeddings.npy"));
+    encoder.set_weights(np.load("embeddings.npy", allow_pickle = True));
 
     return mdl, encoder;
 
