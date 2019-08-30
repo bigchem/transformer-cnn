@@ -47,7 +47,7 @@ DEVICE = getConfig("Details","gpu");
 EARLY_STOPPING = float(getConfig("Details", "early_sopping", "0.9"));
 AVERAGING = int(getConfig("Details", "averaging", "5"));
 
-FIRST_LINE = False
+FIRST_LINE = True
 
 os.environ["CUDA_VISIBLE_DEVICES"] = DEVICE;
 
