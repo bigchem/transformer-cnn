@@ -50,7 +50,7 @@ AVERAGING = int(getConfig("Details", "averaging", "5"));
 CONV_OFFSET = int(getConfig("Details", "conv-offset", 60));
 
 
-FIRST_LINE = False
+FIRST_LINE = True
 
 os.environ["CUDA_VISIBLE_DEVICES"] = DEVICE;
 
@@ -396,6 +396,8 @@ def buildNetwork(nettype):
 
     #text-cnn part
     #https://github.com/deepchem/deepchem/blob/b7a6d3d759145d238eb8abaf76183e9dbd7b683c/deepchem/models/tensorgraph/models/text_cnn.py
+
+    l_in2 =  layers.Input( shape= (None,EMBEDDING_SIZE));
 
     kernel_sizes=[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 15, 20];
     num_filters=[100, 200, 200, 200, 200, 100, 100, 100, 100, 100, 160, 160];
