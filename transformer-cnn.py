@@ -12,6 +12,7 @@ import shutil
 import math
 
 from rdkit import Chem
+from rdkit.Chem import SaltRemover
 from layers import PositionLayer, MaskLayerLeft, \
                    MaskLayerRight, MaskLayerTriangular, \
                    SelfLayer, LayerNormalization
@@ -44,10 +45,12 @@ BATCH_SIZE = int(getConfig("Details","batch_size", "32"));
 SEED = int(getConfig("Details","seed", "657488"));
 CANONIZE = getConfig("Details","canonize");
 DEVICE = getConfig("Details","gpu");
-EARLY_STOPPING = float(getConfig("Details", "early_sopping", "0.9"));
+EARLY_STOPPING = float(getConfig("Details", "early-sopping", "0.9"));
 AVERAGING = int(getConfig("Details", "averaging", "5"));
+CONV_OFFSET = int(getConfig("Details", "conv-offset", 60));
 
-FIRST_LINE = True
+
+FIRST_LINE = False
 
 os.environ["CUDA_VISIBLE_DEVICES"] = DEVICE;
 
@@ -55,7 +58,6 @@ N_HIDDEN = 512;
 N_HIDDEN_CNN = 512;
 EMBEDDING_SIZE = 64;
 KEY_SIZE = EMBEDDING_SIZE;
-SEQ_LENGTH = 256;
 
 #our vocabulary
 chars = " ^#%()+-./0123456789=@ABCDEFGHIKLMNOPRSTVXYZ[\\]abcdefgilmnoprstuy$";
@@ -274,6 +276,8 @@ def analyzeDescrFile(fname):
     ind_mol = 0;
     ind_val = 1;
 
+    remover = SaltRemover.SaltRemover();
+
     for row in csv.reader(open(fname, "r")):
 
        if first_row:
@@ -283,16 +287,21 @@ def analyzeDescrFile(fname):
        mol = row[ind_mol];
        val = float(row[ind_val]);
 
+
        arr = [];
-       if CANONIZE == 'True':
-          with suppress_stderr():
-             m = Chem.MolFromSmiles(mol);
-             if m is not None:
-                for step in range(10):
-                   arr.append(Chem.MolToSmiles(m, rootedAtAtom = np.random.randint(0, m.GetNumAtoms()), canonical = False));
-             else:
-                 arr.append(mol);
-       else:
+       try:
+          if CANONIZE == 'True':
+             with suppress_stderr():
+                m = Chem.MolFromSmiles(mol);
+                m = remover.StripMol(m);
+                if m is not None and m.GetNumAtoms() > 0:
+                   for step in range(10):
+                      arr.append(Chem.MolToSmiles(m, rootedAtAtom = np.random.randint(0, m.GetNumAtoms()), canonical = False));
+                else:
+                   arr.append(mol);
+          else:
+             arr.append(mol);
+       except:
           arr.append(mol);
 
        arr = list(set(arr));
@@ -313,10 +322,7 @@ def gen_data(data, nettype="regression"):
         if nl_a > nl:
             nl = nl_a;
 
-    if nl >= SEQ_LENGTH:
-        raise Exception("Input string is too long.");
-
-    nl = nl + 60;
+    nl = nl + CONV_OFFSET;
 
     x = np.zeros((batch_size, nl), np.int8);
     mx = np.zeros((batch_size, nl), np.int8);
@@ -348,7 +354,6 @@ def data_generator(ds, nettype = "regression"):
       if len(data) > 0:
          yield gen_data(data, nettype);
          data = [];
-         break;
       raise StopIteration();
 
 def buildNetwork(nettype):
@@ -388,7 +393,6 @@ def buildNetwork(nettype):
 
     #end of Transformer's part
     l_encoder = l_embed;
-    l_in2 = layers.Input( shape= (None, EMBEDDING_SIZE));
 
     #text-cnn part
     #https://github.com/deepchem/deepchem/blob/b7a6d3d759145d238eb8abaf76183e9dbd7b683c/deepchem/models/tensorgraph/models/text_cnn.py
@@ -472,7 +476,7 @@ if __name__ == "__main__":
            all_generator = data_generator2(DSC_ALL);
 
         else:
-           #np.random.shuffle(inds);
+           np.random.shuffle(inds);
            ntrain = int(EARLY_STOPPING * nall);
 
            print("Trainig samples:", ntrain, "validation:", nall - ntrain);
@@ -583,6 +587,20 @@ if __name__ == "__main__":
                  if EARLY_STOPPING > 0:
                     print("MESSAGE: train score: {} / validation score: {} / at epoch: {} {} ".format(round(float(logs["loss"]), 3),
                           round(float(logs["val_loss"]), 3), epoch +1, device_str));
+
+                    early = float(logs["val_loss"]);
+                    if(epoch == 0):
+                       self.early_best = early;
+                    else:
+                       if early < self.early_best :
+                          self.early_count = 0;
+                          self.early_best = early;
+                       else:
+                          self.early_count += 1;
+                          if self.early_count > self.early_max:
+                             self.model.stop_training = True;
+                          return;
+
                  else:
                     print("MESSAGE: train score: {} / at epoch: {} {} ".format(round(float(logs["loss"]), 3),
                           epoch +1, device_str));
@@ -679,8 +697,6 @@ if __name__ == "__main__":
        if nettype == "regression":
           info[1] = float(info[1]);
           info[2] = float(info[2]);
-       else:
-          info[1] = float(info[1]);
 
        first_row = FIRST_LINE;
        DS = [];
@@ -688,6 +704,7 @@ if __name__ == "__main__":
        fp = open(RESULT_FILE, "w");
 
        ind_mol = 0;
+       remover = SaltRemover.SaltRemover();
 
        for row in csv.reader(open(APPLY_FILE, "r")):
           if first_row:
@@ -697,16 +714,20 @@ if __name__ == "__main__":
           mol = row[ind_mol];
 
           arr = [];
-          if CANONIZE == 'True':
-             with suppress_stderr():
-                m = Chem.MolFromSmiles(mol);
-                if m is not None:
-                   for step in range(10):
-                      arr.append(Chem.MolToSmiles(m, rootedAtAtom = np.random.randint(0, m.GetNumAtoms()), canonical = False));
-                else:
-                    arr.append(mol);
-          else:
-             arr.append(mol);
+          try:
+             if CANONIZE == 'True':
+                with suppress_stderr():
+                   m = Chem.MolFromSmiles(mol);
+                   m = remover.StripMol(m);
+                   if m is not None and m.GetNumAtoms() > 0:
+                      for step in range(10):
+                         arr.append(Chem.MolToSmiles(m, rootedAtAtom = np.random.randint(0, m.GetNumAtoms()), canonical = False));
+                   else:
+                      arr.append(mol);
+             else:
+                arr.append(mol);
+          except:
+              arr.append(mol);
 
           arr = list(set(arr));
           d = [];
@@ -719,9 +740,9 @@ if __name__ == "__main__":
              y = (y - 0.9) / 0.8 * (info[2] - info[1]) + info[2];
              print(y, file=fp);
           else:
-             y = np.mean(mdl.predict(encoder.predict(x))[:,1]);
-             print(y, 1 if y >= info[1] else 0,file=fp);
-
+             y0 = np.mean(mdl.predict(encoder.predict(x))[:,0]);
+             y1 = np.mean(mdl.predict(encoder.predict(x))[:,1]);
+             print(y0, y1,file=fp);
 
        fp.close();
 
