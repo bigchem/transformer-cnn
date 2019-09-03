@@ -738,13 +738,19 @@ if __name__ == "__main__":
 
           x, y = gen_data(d, nettype);
           if nettype == "regression":
-             y = np.mean(mdl.predict( encoder.predict(x) ));
-             y = (y - 0.9) / 0.8 * (info[2] - info[1]) + info[2];
-             print(y, file=fp);
+             try:
+                y = np.mean(mdl.predict( encoder.predict(x) ));
+                y = (y - 0.9) / 0.8 * (info[2] - info[1]) + info[2];
+                print(y, file=fp);
+             except:
+                print('error', file = fp);
           else:
-             y0 = np.mean(mdl.predict(encoder.predict(x))[:,0]);
-             y1 = np.mean(mdl.predict(encoder.predict(x))[:,1]);
-             print(y0, y1,file=fp);
+             try:
+                y0 = np.mean(mdl.predict(encoder.predict(x))[:,0]);
+                y1 = np.mean(mdl.predict(encoder.predict(x))[:,1]);
+                print(y1, ",", y0, file=fp);
+             except:
+                print('error,error', file=fp);
 
        fp.close();
 
