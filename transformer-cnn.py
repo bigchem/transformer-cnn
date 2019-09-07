@@ -275,6 +275,7 @@ def analyzeDescrFile(fname):
     DS = [];
     ind_mol = 0;
     ind_val = 1;
+    g_chars = set(chars);
 
     remover = SaltRemover.SaltRemover();
 
@@ -284,9 +285,13 @@ def analyzeDescrFile(fname):
           first_row = False;
           continue;
 
-       mol = row[ind_mol];
+       mol = row[ind_mol].strip();
        val = float(row[ind_val]);
-
+ 
+       #remove molecules with symbols not in our vocabulary
+       g_mol = set(mol);
+       g_left = g_mol - g_chars;
+       if len(g_left) > 0: continue;
 
        arr = [];
        try:
