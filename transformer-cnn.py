@@ -741,9 +741,9 @@ if __name__ == "__main__":
           for step in range(len(arr)):
              d.append([arr[step], 0]);
 
-          x, y = gen_data(d, nettype);
           if nettype == "regression":
              try:
+                x, y = gen_data(d, nettype);
                 y = np.mean(mdl.predict( encoder.predict(x) ));
                 y = (y - 0.9) / 0.8 * (info[2] - info[1]) + info[2];
                 print(y, file=fp);
@@ -751,9 +751,10 @@ if __name__ == "__main__":
                 print('error', file = fp);
           else:
              try:
+                x, y = gen_data(d, nettype);
                 y0 = np.mean(mdl.predict(encoder.predict(x))[:,0]);
                 y1 = np.mean(mdl.predict(encoder.predict(x))[:,1]);
-                print(y1, ",", y0, file=fp);
+                print(str(y0) + "," + str(y0), file=fp);
              except:
                 print('error,error', file=fp);
 
