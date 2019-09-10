@@ -786,7 +786,7 @@ if __name__ == "__main__":
                        print(r, file=fp);
                  else:
                      x, y = gen_data(d, nettype);
-                     y = np.mean(mdl.predict(encoder.predict(x)));
+                     y = mdl.predict(encoder.predict(x));
                      for i in range(len(d)):
                         if e[i] == 0:
                            print("error,error", file=fp);
@@ -807,7 +807,7 @@ if __name__ == "__main__":
                     print(r, file=fp);
               else:
                   x, y = gen_data(d, nettype);
-                  y = np.mean(mdl.predict(encoder.predict(x)));
+                  y = mdl.predict(encoder.predict(x));
                   for i in range(len(d)):
                      if e[i] == 0:
                         print("error,error", file=fp);
