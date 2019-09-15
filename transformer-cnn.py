@@ -61,6 +61,7 @@ KEY_SIZE = EMBEDDING_SIZE;
 
 #our vocabulary
 chars = " ^#%()+-./0123456789=@ABCDEFGHIKLMNOPRSTVXYZ[\\]abcdefgilmnoprstuy$";
+g_chars = set(chars);
 vocab_size = len(chars);
 
 char_to_ix = { ch:i for i,ch in enumerate(chars) }
@@ -284,9 +285,13 @@ def analyzeDescrFile(fname):
           first_row = False;
           continue;
 
-       mol = row[ind_mol];
+       mol = row[ind_mol].strip();
        val = float(row[ind_val]);
 
+       #remove molecules with symbols not in our vocabulary
+       g_mol = set(mol);
+       g_left = g_mol - g_chars;
+       if len(g_left) > 0: continue;
 
        arr = [];
        try:
@@ -706,18 +711,17 @@ if __name__ == "__main__":
        fp = open(RESULT_FILE, "w");
 
        ind_mol = 0;
-       remover = SaltRemover.SaltRemover();
 
-       for row in csv.reader(open(APPLY_FILE, "r")):
-          if first_row:
-             first_row = False;
-             continue;
+       if CANONIZE == 'True':
+          remover = SaltRemover.SaltRemover();
+          for row in csv.reader(open(APPLY_FILE, "r")):
+             if first_row:
+                first_row = False;
+                continue;
 
-          mol = row[ind_mol];
-
-          arr = [];
-          try:
-             if CANONIZE == 'True':
+             mol = row[ind_mol];
+             arr = [];
+             try:
                 with suppress_stderr():
                    m = Chem.MolFromSmiles(mol);
                    m = remover.StripMol(m);
@@ -726,25 +730,89 @@ if __name__ == "__main__":
                          arr.append(Chem.MolToSmiles(m, rootedAtAtom = np.random.randint(0, m.GetNumAtoms()), canonical = False));
                    else:
                       arr.append(mol);
+             except:
+                 arr.append(mol);
+
+             arr = list(set(arr));
+             d = [];
+             for step in range(len(arr)):
+                d.append([arr[step], 0]);
+
+             if nettype == "regression":
+                try:
+                   x, y = gen_data(d, nettype);
+                   y = np.mean(mdl.predict( encoder.predict(x) ));
+                   y = (y - 0.9) / 0.8 * (info[2] - info[1]) + info[2];
+                   print(y, file=fp);
+                except:
+                   print('error', file = fp);
              else:
-                arr.append(mol);
-          except:
-              arr.append(mol);
-
-          arr = list(set(arr));
+                try:
+                   x, y = gen_data(d, nettype);
+                   y0 = np.mean(mdl.predict(encoder.predict(x))[:,0]);
+                   y1 = np.mean(mdl.predict(encoder.predict(x))[:,1]);
+                   print(str(y0) + "," + str(y0), file=fp);
+                except:
+                   print('error,error', file=fp);
+       else:
           d = [];
-          for step in range(len(arr)):
-             d.append([arr[step], 0]);
+          e = [];
+          for row in csv.reader(open(APPLY_FILE, "r")):
+             if first_row:
+                first_row = False;
+                continue;
 
-          x, y = gen_data(d, nettype);
-          if nettype == "regression":
-             y = np.mean(mdl.predict( encoder.predict(x) ));
-             y = (y - 0.9) / 0.8 * (info[2] - info[1]) + info[2];
-             print(y, file=fp);
-          else:
-             y0 = np.mean(mdl.predict(encoder.predict(x))[:,0]);
-             y1 = np.mean(mdl.predict(encoder.predict(x))[:,1]);
-             print(y0, y1,file=fp);
+             mol = row[ind_mol];
+             g_mol = set(mol);
+             g_left = g_mol - g_chars;
+
+             if len(g_left) == 0:
+                e.append(1);
+                d.append([mol, 0]);
+             else:
+                e.append(0);
+                d.append(["CC", 0]);
+
+             if (len(d) == BATCH_SIZE):
+
+                 if nettype == "regression":
+                    x, y = gen_data(d, nettype);
+                    y = mdl.predict( encoder.predict(x) );
+                    for i in range(len(d)):
+                       if e[i] == 0:
+                          print("error", file=fp);
+                          continue;
+                       r = (y[i, 0] - 0.9) / 0.8 * (info[2] - info[1]) + info[2];
+                       print(r, file=fp);
+                 else:
+                     x, y = gen_data(d, nettype);
+                     y = mdl.predict(encoder.predict(x));
+                     for i in range(len(d)):
+                        if e[i] == 0:
+                           print("error,error", file=fp);
+                           continue;
+                        print(str(y[i,0]) + "," + str(y[i,1]), file=fp);
+                 d = [];
+                 e = [];
+
+          if len(d):
+              if nettype == "regression":
+                 x, y = gen_data(d, nettype);
+                 y = mdl.predict( encoder.predict(x) );
+                 for i in range(len(d)):
+                    if e[i] == 0:
+                       print("error", file=fp);
+                       continue;
+                    r = (y[i, 0] - 0.9) / 0.8 * (info[2] - info[1]) + info[2];
+                    print(r, file=fp);
+              else:
+                  x, y = gen_data(d, nettype);
+                  y = mdl.predict(encoder.predict(x));
+                  for i in range(len(d)):
+                     if e[i] == 0:
+                        print("error,error", file=fp);
+                        continue;
+                     print(str(y[i,0]) + "," + str(y[i,1]), file=fp);
 
        fp.close();
 
