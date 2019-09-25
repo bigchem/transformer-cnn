@@ -48,7 +48,7 @@ DEVICE = getConfig("Details","gpu");
 EARLY_STOPPING = float(getConfig("Details", "early-sopping", "0.9"));
 AVERAGING = int(getConfig("Details", "averaging", "5"));
 CONV_OFFSET = int(getConfig("Details", "conv-offset", 60));
-
+FIXED_LEARNING_RATE = getConfig("Details", "fixed-learning-rate", "False");
 
 FIRST_LINE = True
 
@@ -440,6 +440,8 @@ def buildNetwork(nettype):
        mdl = tf.keras.Model([l_in2], l_out);
        mdl.compile (optimizer = 'adam', loss = 'binary_crossentropy', metrics=['acc'] );
 
+    K.set_value(mdl.optimizer.lr, 1.0e-4);
+
     encoder = tf.keras.Model([l_in, l_mask], l_encoder);
     encoder.compile(optimizer = 'adam', loss = 'mse');
     encoder.set_weights(np.load("embeddings.npy", allow_pickle = True));
@@ -529,9 +531,10 @@ if __name__ == "__main__":
 
            def on_batch_begin(self, batch, logs={}):
               self.steps += 1;
-              lr = 1.0 * min(1.0, self.steps / self.warm) / max(self.steps, self.warm);
-              if lr < 1e-4 : lr = 1e-4;
-              K.set_value(self.model.optimizer.lr, lr);
+              if FIXED_LEARNING_RATE == "False":
+                 lr = 1.0 * min(1.0, self.steps / self.warm) / max(self.steps, self.warm);
+                 if lr < 1e-4 : lr = 1e-4;
+                 K.set_value(self.model.optimizer.lr, lr);
 
            def on_epoch_end(self, epoch, logs={}):
               if nettype == "regression":
