@@ -1,4 +1,6 @@
-*.csv
+*.csv *.tar 
+
+model/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
