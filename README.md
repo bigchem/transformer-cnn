@@ -4,12 +4,13 @@ The repository contains the source code for a new Transformer-CNN method describ
 
 Feel free to contact us if you have any suggestions or possible applications of this code.
 
-#Dependencies 
+# Dependencies 
 
 The code has been tested in Ubuntu 18.04 with the following components:
-python v.3.4.6 or higher
-TensorFlow v1.12
- rdkit v.2018.09.2
+
+1. python v.3.4.6 or higher
+2. TensorFlow v1.12
+3. rdkit v.2018.09.2
 
 # How to use
 
