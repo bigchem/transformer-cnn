@@ -88,6 +88,8 @@ except:
 
 np.random.seed(SEED);
 
+props = {};
+
 def calcStatistics(p,y):
 
    r2 = np.corrcoef(p, y)[0, 1];
@@ -245,29 +247,34 @@ class suppress_stderr(object):
 
 def findBoundaries(DS):
 
-    x = [];
-    for i in range(len(DS)):
-      x.append(DS[i][1]);
+    for prop in props:
 
-    hist= np.histogram(x)[0];
-    if np.count_nonzero(hist) > 2:
-       y_min = np.min(x);
-       y_max = np.max(x);
-
-       add = 0.01 * (y_max - y_min);
-       y_max = y_max + add;
-       y_min = y_min - add;
-
-       print("regression:", y_min, "to", y_max, "scaling...");
-
+       x = [];
        for i in range(len(DS)):
-          DS[i][1] = 0.9 + 0.8 * (DS[i][1] - y_max) / (y_max - y_min);
+         if DS[i][2][prop] == 1:
+            x.append(DS[i][1][prop]);
 
-       return ["regression", y_min, y_max];
+       hist= np.histogram(x)[0];
+       if np.count_nonzero(hist) > 2:
+          y_min = np.min(x);
+          y_max = np.max(x);
 
-    else:
-       print("classification");
-       return ["classification"];
+          add = 0.01 * (y_max - y_min);
+          y_max = y_max + add;
+          y_min = y_min - add;
+
+          print(props[prop][1], "regression:", y_min, "to", y_max, "scaling...");
+
+          for i in range(len(DS)):
+             if DS[i][2][prop] == 1:
+                DS[i][1][prop] = 0.9 + 0.8 * (DS[i][1][prop] - y_max) / (y_max - y_min);
+
+          props[prop].extend(["regression", y_min, y_max]);
+
+       else:
+          print(props[prop][1], "classification");
+          props[prop].extend(["classification"]);
+
 
 def analyzeDescrFile(fname):
 
@@ -275,18 +282,27 @@ def analyzeDescrFile(fname):
 
     DS = [];
     ind_mol = 0;
-    ind_val = 1;
 
     remover = SaltRemover.SaltRemover();
 
+    line = 0;
     for row in csv.reader(open(fname, "r")):
+
+       #if line > 100: break;
+       #line = line + 1;
 
        if first_row:
           first_row = False;
+          j = 0;
+          for i, prop in enumerate(row):
+             if prop == "mol": 
+                ind_mol = i;
+                continue;
+             props[j] = [i, prop];
+             j = j + 1;          
           continue;
 
        mol = row[ind_mol].strip();
-       val = float(row[ind_val]);
 
        #remove molecules with symbols not in our vocabulary
        g_mol = set(mol);
@@ -309,14 +325,29 @@ def analyzeDescrFile(fname):
        except:
           arr.append(mol);
 
+       vals = np.zeros( len(props), dtype=np.float32 );
+       mask = np.zeros( len(props), dtype =np.int8 );
+
+       for prop in props:
+           idx = prop;
+           icsv = props[prop][0];
+           s = row[icsv].strip();
+           if s == '':
+              val = 0;              
+           else:
+              val = float(s);
+              mask[idx] = 1;
+           vals[idx] = val;      
+
        arr = list(set(arr));
        for step in range(len(arr)):
-          DS.append( [ arr[step], float(val) ]);
+          DS.append( [ arr[step], np.copy(vals), mask ]);
+  
+    findBoundaries(DS);
 
-    info = findBoundaries(DS);
-    return [DS, info];
+    return DS;
 
-def gen_data(data, nettype="regression"):
+def gen_data(data):
 
     batch_size = len(data);
 
@@ -331,7 +362,13 @@ def gen_data(data, nettype="regression"):
 
     x = np.zeros((batch_size, nl), np.int8);
     mx = np.zeros((batch_size, nl), np.int8);
-    z = np.zeros((batch_size) if (nettype == "regression") else (batch_size, 2), np.float32);
+
+    z = [];
+    ym = [];
+ 
+    for i in range(len(props)):
+       z.append(np.zeros((batch_size, 1), np.float32));
+       ym.append(np.zeros((batch_size, 1), np.int8));
 
     for cnt in range(batch_size):
 
@@ -340,34 +377,42 @@ def gen_data(data, nettype="regression"):
            x[cnt, i] = char_to_ix[ data[cnt][0][i]] ;
         mx[cnt, :i+1] = 1;
 
-        if nettype == "regression":
-           z [cnt ] = data[cnt][1];
-        else:
-           z [cnt , int(data[cnt][1]) ] = 1;
+        for i in range(len(props)):    
+           z[i][cnt] = data[cnt][1][i];
+           ym[i][cnt ] = data[cnt][2][i]; 
 
-    return [x, mx], z;
+    d = [x, mx];
+  
+    for i in range(len(props)):
+       d.extend([ym[i]]);
 
-def data_generator(ds, nettype = "regression"):
+    return d, z;
+
+def data_generator(ds):
 
    data = [];
    while True:
       for i in range(len(ds)):
          data.append( ds[i] );
          if len(data) == BATCH_SIZE:
-            yield gen_data(data, nettype);
+            yield gen_data(data);
             data = [];
       if len(data) > 0:
-         yield gen_data(data, nettype);
+         yield gen_data(data);
          data = [];
       raise StopIteration();
 
-def buildNetwork(nettype):
+def buildNetwork():
 
     unfreeze = False;
     n_block, n_self = 3, 10;
 
     l_in = layers.Input( shape= (None,));
     l_mask = layers.Input( shape= (None,));
+ 
+    l_ymask = [];
+    for i in range(len(props)):
+       l_ymask.append( layers.Input( shape=(1, )));
 
     #transformer part
     #positional encodings for product and reagents, respectively
@@ -431,17 +476,42 @@ def buildNetwork(nettype):
 
     l_highway = layers.Add()([transformed_gated, identity_gated]);
 
-    if nettype == "regression":
-       l_out = layers.Dense(1, activation='linear', name="Regression") (l_highway);
-       mdl = tf.keras.Model([l_in2], l_out);
-       mdl.compile (optimizer = 'adam', loss = 'mse', metrics=['mse'] );
-    else:
-       l_out = layers.Dense(2, activation='softmax', name="Classification") (l_highway);
-       mdl = tf.keras.Model([l_in2], l_out);
-       mdl.compile (optimizer = 'adam', loss = 'binary_crossentropy', metrics=['acc'] );
+    #Because of multitask we have here a few different outputs and a custom loss.
+
+    def mse_loss(prop):
+       def loss(y_true, y_pred):
+          y2 = y_true * l_ymask[prop] + y_pred * (1 - l_ymask[prop]);
+          return tf.keras.losses.mse(y2, y_pred);
+       return loss;
+
+    def binary_loss(prop):
+       def loss(y_true, y_pred):
+          y2 = K.max(y_pred, 0) - y_pred * y_true + tf.log(1. + tf.exp(-K.abs(y_pred)))
+          return tf.reduce_mean( y2 * l_ymask[prop]);
+       return loss;
+
+
+    l_out = [];
+    losses = [];
+    for prop in props:
+       if props[prop][2] == "regression":
+          l_out.append(layers.Dense(1, activation='linear', name="Regression-" + props[prop][1]) (l_highway));
+          losses.append(mse_loss(prop));
+       else:
+          l_out.append(layers.Dense(1, activation='sigmoid', name="Classification-" + props[prop][1]) (l_highway));
+          losses.append(binary_loss(prop));
+ 
+    l_input = [l_in2];
+    l_input.extend(l_ymask);
+ 
+    mdl = tf.keras.Model(l_input, l_out);
+    mdl.compile (optimizer = 'adam', loss = losses);
+
+    mdl.summary();
 
     K.set_value(mdl.optimizer.lr, 1.0e-4);
 
+    #so far we do not train the encoder part of the model.
     encoder = tf.keras.Model([l_in, l_mask], l_encoder);
     encoder.compile(optimizer = 'adam', loss = 'mse');
     encoder.set_weights(np.load("embeddings.npy", allow_pickle = True));
@@ -456,11 +526,9 @@ if __name__ == "__main__":
     if TRAIN == "True":
         print("Analyze training file...");
 
-        DS, info = analyzeDescrFile(TRAIN_FILE);
-        nettype = info[0];
-
-        mdl, encoder = buildNetwork(nettype);
-
+        DS = analyzeDescrFile(TRAIN_FILE);
+        mdl, encoder = buildNetwork();
+ 
         nall = len(DS);
         print("Number of all points: ", nall);
 
@@ -475,7 +543,7 @@ if __name__ == "__main__":
            np.random.shuffle(inds);
 
            d = [DS[x] for x in inds];
-           all_generator = data_generator(d, nettype);
+           all_generator = data_generator(d);
 
            DSC_ALL = [];
            for x, y in all_generator:
@@ -495,20 +563,26 @@ if __name__ == "__main__":
            DS_train = [DS[x] for x in inds_train];
            DS_valid = [DS[x] for x in inds_valid];
 
-           train_generator = data_generator(DS_train, nettype);
-           valid_generator = data_generator(DS_valid, nettype);
+           train_generator = data_generator(DS_train);
+           valid_generator = data_generator(DS_valid);
 
            DSC_TRAIN = [];
            DSC_VALID = [];
 
            #calculate "descriptors"
-           for x, y in train_generator:
-              z = encoder.predict(x);
-              DSC_TRAIN.append((z, y));
+           for x, y in train_generator:             
+              z = encoder.predict([x[0], x[1]]);
+              d = [z];
+              for i in range(len(props)):
+                 d.extend([x[i+2]]);
+              DSC_TRAIN.append((d, y));
 
            for x, y in valid_generator:
-              z = encoder.predict(x);
-              DSC_VALID.append((z, y));
+              z = encoder.predict([x[0], x[1]]);
+              d = [z];
+              for i in range(len(props)):
+                 d.extend([x[i+2]]);
+              DSC_VALID.append((d, y));
 
            train_generator = data_generator2(DSC_TRAIN);
            valid_generator = data_generator2(DSC_VALID);
@@ -537,83 +611,25 @@ if __name__ == "__main__":
                  K.set_value(self.model.optimizer.lr, lr);
 
            def on_epoch_end(self, epoch, logs={}):
-              if nettype == "regression":
-
-                 y_pred = [];
-                 y_real = [];
-
-                 if EARLY_STOPPING > 0:
-                    for batch in range(len(DSC_VALID)):
-                       x,y = next(self.valid_gen);
-                       p = self.model.predict(x);
-                       for i in range(y.shape[0]):
-                          y_real.append((y[i] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
-                          y_pred.append((p[i,0] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
-                    r2, rmse_v = calcStatistics(y_pred, y_real);
-
-                    y_pred = [];
-                    y_real = [];
-
-                    for batch in range(len(DSC_TRAIN)):
-                       x,y = next(self.train_gen);
-                       p = self.model.predict(x);
-                       for i in range(y.shape[0]):
-                          y_real.append((y[i] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
-                          y_pred.append((p[i,0] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
-
-                    r2, rmse_t = calcStatistics(y_pred, y_real);
-                    print("MESSAGE: train score: {} / validation score: {} / at epoch: {} {} ".format(round (rmse_t, 3),
-                           round(rmse_v, 3), epoch +1, device_str));
-
-                    early = round(rmse_v,3);
-                    if(epoch == 0):
+              if EARLY_STOPPING > 0:
+                 print("MESSAGE: train score: {} / validation score: {} / at epoch: {} {} ".format(round(float(logs["loss"]), 7),
+                       round(float(logs["val_loss"]), 7), epoch +1, device_str));
+                 early = float(logs["val_loss"]);
+                 if(epoch == 0):
+                    self.early_best = early;
+                 else:
+                    if early < self.early_best :
+                       self.early_count = 0;
                        self.early_best = early;
                     else:
-                       if early < self.early_best :
-                          self.early_count = 0;
-                          self.early_best = early;
-                       else:
-                          self.early_count += 1;
-                          if self.early_count > self.early_max:
-                             self.model.stop_training = True;
-                          return;
-
-                 else:
-                     y_pred = [];
-                     y_real = [];
-
-                     for batch in range(len(DSC_ALL)):
-                        x,y = next(self.train_gen);
-                        p = self.model.predict(x);
-                        for i in range(y.shape[0]):
-                           y_real.append((y[i] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
-                           y_pred.append((p[i,0] - 0.9) / 0.8 * (info[2] - info[1]) + info[2]);
-
-                     r2, rmse_t = calcStatistics(y_pred, y_real);
-                     print("MESSAGE: train score: {} / at epoch: {} {} ".format(round (rmse_t, 3),
-                           epoch + 1, device_str));
+                       self.early_count += 1;
+                       if self.early_count > self.early_max:
+                          self.model.stop_training = True;
+                       return;
 
               else:
-                 if EARLY_STOPPING > 0:
-                    print("MESSAGE: train score: {} / validation score: {} / at epoch: {} {} ".format(round(float(logs["loss"]), 3),
-                          round(float(logs["val_loss"]), 3), epoch +1, device_str));
-
-                    early = float(logs["val_loss"]);
-                    if(epoch == 0):
-                       self.early_best = early;
-                    else:
-                       if early < self.early_best :
-                          self.early_count = 0;
-                          self.early_best = early;
-                       else:
-                          self.early_count += 1;
-                          if self.early_count > self.early_max:
-                             self.model.stop_training = True;
-                          return;
-
-                 else:
-                    print("MESSAGE: train score: {} / at epoch: {} {} ".format(round(float(logs["loss"]), 3),
-                          epoch +1, device_str));
+                 print("MESSAGE: train score: {} / at epoch: {} {} ".format(round(float(logs["loss"]), 5),
+                       epoch +1, device_str));
 
               if EARLY_STOPPING == 0 and epoch >= (NUM_EPOCHS - AVERAGING-1):
                   self.model.save_weights("e-" + str(epoch) + ".h5");
@@ -674,19 +690,18 @@ if __name__ == "__main__":
               os.remove("e-" + str(i) + ".h5");
            os.rename("e-" + str(NUM_EPOCHS - AVERAGING-1) + ".h5", "model.h5");
 
-        fp = open("model.txt", "w");
-        print(info, file=fp);
-        fp.close();
+        with open('model.pkl', 'wb') as f:
+           pickle.dump(props, f);
 
         tar = tarfile.open(MODEL_FILE, "w:gz");
-        tar.add("model.txt");
+        tar.add("model.pkl");
         tar.add("model.h5");
         tar.close();
 
         if EARLY_STOPPING > 0:
            shutil.rmtree("model/");
 
-        os.remove("model.txt");
+        os.remove("model.pkl");
         os.remove("model.h5");
 
     elif TRAIN == "False":
@@ -695,24 +710,19 @@ if __name__ == "__main__":
        tar.extractall();
        tar.close();
 
-       info = open("model.txt").read().strip();
-       info = info.replace("'", "");
-       info = info.replace("[", "");
-       info = info.replace("]", "").split(",");
+       props = pickle.load( open( "model.pkl", "rb" ));
 
-       nettype = info[0].strip();
-       mdl, encoder = buildNetwork(nettype);
+       mdl, encoder = buildNetwork();
        mdl.load_weights("model.h5");
-
-       if nettype == "regression":
-          info[1] = float(info[1]);
-          info[2] = float(info[2]);
 
        first_row = FIRST_LINE;
        DS = [];
 
        fp = open(RESULT_FILE, "w");
-
+       for prop in props:
+          print(props[prop][1], end=",", file=fp);
+       print("", file=fp);
+ 
        ind_mol = 0;
 
        if CANONIZE == 'True':
@@ -723,43 +733,55 @@ if __name__ == "__main__":
                 continue;
 
              mol = row[ind_mol];
+             g_mol = set(mol);
+             g_left = g_mol - g_chars;
+ 
              arr = [];
-             try:
-                with suppress_stderr():
-                   m = Chem.MolFromSmiles(mol);
-                   m = remover.StripMol(m);
-                   if m is not None and m.GetNumAtoms() > 0:
-                      for step in range(10):
-                         arr.append(Chem.MolToSmiles(m, rootedAtAtom = np.random.randint(0, m.GetNumAtoms()), canonical = False));
-                   else:
-                      arr.append(mol);
-             except:
-                 arr.append(mol);
-
-             arr = list(set(arr));
-             d = [];
-             for step in range(len(arr)):
-                d.append([arr[step], 0]);
-
-             if nettype == "regression":
+             if len(g_left) == 0:
                 try:
-                   x, y = gen_data(d, nettype);
-                   y = np.mean(mdl.predict( encoder.predict(x) ));
-                   y = (y - 0.9) / 0.8 * (info[2] - info[1]) + info[2];
-                   print(y, file=fp);
+                   with suppress_stderr():
+                      m = Chem.MolFromSmiles(mol);
+                      m = remover.StripMol(m);
+                      if m is not None and m.GetNumAtoms() > 0:
+                         for step in range(10):
+                            arr.append(Chem.MolToSmiles(m, rootedAtAtom = np.random.randint(0, m.GetNumAtoms()), canonical = False));
+                      else:
+                         arr.append(mol);
                 except:
-                   print('error', file = fp);
+                    arr.append(mol);
              else:
-                try:
-                   x, y = gen_data(d, nettype);
-                   y0 = np.mean(mdl.predict(encoder.predict(x))[:,0]);
-                   y1 = np.mean(mdl.predict(encoder.predict(x))[:,1]);
-                   print(str(y0) + "," + str(y0), file=fp);
-                except:
-                   print('error,error', file=fp);
+                for i in range(len(props)):
+                   print("error", end=",", file=fp);
+
+             z = np.zeros(len(props), dtype=np.float32);
+             ymask = np.ones(len(props), dtype=np.int8);
+
+             d= [];
+             for i in range(len(arr)):
+                d.append( [arr[i], z, ymask]);
+               
+             x, y = gen_data(d);            
+             internal = encoder.predict( [x[0], x[1]]); 
+
+             p = [internal];
+             for i in range(len(props)):
+                 p.extend([x[i+2]]);
+
+             y = mdl.predict( p );
+             res = np.zeros( len(props)); 
+
+             for prop in props:
+                res[prop] = np.mean(y[prop]);               
+                if props[prop][2] == "regression":
+                   res[prop] = (res[prop] - 0.9) / 0.8 * (props[prop][4] - props[prop][3]) + props[prop][4];
+                print(res[prop], end=",", file=fp);
+             print("", file=fp);
+                          
        else:
-          d = [];
+
+          arr = [];
           e = [];
+
           for row in csv.reader(open(APPLY_FILE, "r")):
              if first_row:
                 first_row = False;
@@ -771,55 +793,83 @@ if __name__ == "__main__":
 
              if len(g_left) == 0:
                 e.append(1);
-                d.append([mol, 0]);
+                arr.append(mol);
              else:
                 e.append(0);
-                d.append(["CC", 0]);
+                arr.append("CC");
 
-             if (len(d) == BATCH_SIZE):
+             if (len(arr) == BATCH_SIZE):
+      
+                z = np.zeros(len(props), dtype=np.float32);
+                ymask = np.ones(len(props), dtype=np.int8);
 
-                 if nettype == "regression":
-                    x, y = gen_data(d, nettype);
-                    y = mdl.predict( encoder.predict(x) );
-                    for i in range(len(d)):
-                       if e[i] == 0:
-                          print("error", file=fp);
-                          continue;
-                       r = (y[i, 0] - 0.9) / 0.8 * (info[2] - info[1]) + info[2];
-                       print(r, file=fp);
-                 else:
-                     x, y = gen_data(d, nettype);
-                     y = mdl.predict(encoder.predict(x));
-                     for i in range(len(d)):
-                        if e[i] == 0:
-                           print("error,error", file=fp);
-                           continue;
-                        print(str(y[i,0]) + "," + str(y[i,1]), file=fp);
-                 d = [];
-                 e = [];
+                d= [];
+                for i in range(len(arr)):
+                   d.append( [arr[i], z, ymask]);
+               
+                x, y = gen_data(d);            
+                internal = encoder.predict( [x[0], x[1]]); 
 
-          if len(d):
-              if nettype == "regression":
-                 x, y = gen_data(d, nettype);
-                 y = mdl.predict( encoder.predict(x) );
-                 for i in range(len(d)):
-                    if e[i] == 0:
-                       print("error", file=fp);
-                       continue;
-                    r = (y[i, 0] - 0.9) / 0.8 * (info[2] - info[1]) + info[2];
-                    print(r, file=fp);
-              else:
-                  x, y = gen_data(d, nettype);
-                  y = mdl.predict(encoder.predict(x));
-                  for i in range(len(d)):
-                     if e[i] == 0:
-                        print("error,error", file=fp);
-                        continue;
-                     print(str(y[i,0]) + "," + str(y[i,1]), file=fp);
+                p = [internal];
+                for i in range(len(props)):
+                   p.extend([x[i+2]]);
+
+                y = mdl.predict( p );
+                res = np.zeros( len(props)); 
+
+                for i in range(len(arr)):
+                   if e[i] == 0:
+                      for prop in props:
+                          print("error", end=",", file=fp);
+                      print("", file=fp);
+                      continue;
+
+                   for prop in props:
+                      res = y[prop][i][0];
+                      if props[prop][2] == "regression":
+                         res = (res - 0.9) / 0.8 * (props[prop][4] - props[prop][3]) + props[prop][4];
+                      print(res, end=",", file=fp);
+                   print("", file=fp);
+ 
+                arr = [];
+                e = [];
+
+          if len(arr):
+
+             z = np.zeros(len(props), dtype=np.float32);
+             ymask = np.ones(len(props), dtype=np.int8);
+
+             d= [];
+             for i in range(len(arr)):
+                d.append( [arr[i], z, ymask]);
+               
+             x, y = gen_data(d);            
+             internal = encoder.predict( [x[0], x[1]]); 
+
+             p = [internal];
+             for i in range(len(props)):
+                p.extend([x[i+2]]);
+
+             y = mdl.predict( p );
+             res = np.zeros( len(props)); 
+
+             for i in range(len(arr)):
+                if e[i] == 0:
+                   for prop in props:
+                      print("error", end=",", file=fp);
+                   print("", file=fp);
+                   continue;
+
+                for prop in props:
+                   res = y[prop][i][0];
+                   if props[prop][2] == "regression":
+                      res = (res - 0.9) / 0.8 * (props[prop][4] - props[prop][3]) + props[prop][4];
+                   print(res, end=",", file=fp);
+                print("", file=fp);
 
        fp.close();
 
-       os.remove("model.txt");
+       os.remove("model.pkl");
        os.remove("model.h5");
 
 
