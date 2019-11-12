@@ -295,7 +295,7 @@ def analyzeDescrFile(fname):
           first_row = False;
           j = 0;
           for i, prop in enumerate(row):
-             if prop == "mol": 
+             if prop == "smiles": 
                 ind_mol = i;
                 continue;
              props[j] = [i, prop];
