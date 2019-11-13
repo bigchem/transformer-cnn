@@ -507,7 +507,7 @@ def buildNetwork():
     mdl = tf.keras.Model(l_input, l_out);
     mdl.compile (optimizer = 'adam', loss = losses);
 
-    mdl.summary();
+    #mdl.summary();
 
     K.set_value(mdl.optimizer.lr, 1.0e-4);
 
@@ -860,7 +860,6 @@ if __name__ == "__main__":
                    print("", file=fp);
                    continue;
 
-                print(y.shape);
                 for prop in props:
                    if len (props) == 1:
                       res = y[prop][i];
