@@ -860,8 +860,13 @@ if __name__ == "__main__":
                    print("", file=fp);
                    continue;
 
+                print(y.shape);
                 for prop in props:
-                   res = y[prop][i][0];
+                   if len (props) == 1:
+                      res = y[prop][i];
+                   else:
+                      res = y[prop][i][0];
+
                    if props[prop][2] == "regression":
                       res = (res - 0.9) / 0.8 * (props[prop][4] - props[prop][3]) + props[prop][4];
                    print(res, end=",", file=fp);
