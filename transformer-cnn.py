@@ -486,10 +486,11 @@ def buildNetwork():
 
     def binary_loss(prop):
        def loss(y_true, y_pred):
-          y2 = K.max(y_pred, 0) - y_pred * y_true + tf.log(1. + tf.exp(-K.abs(y_pred)))
-          return tf.reduce_mean( y2 * l_ymask[prop]);
+           y_pred = tf.clip_by_value(y_pred, K.epsilon(), 1.0 - K.epsilon() );
+           r = y_true * K.log(y_pred) + (1.0 - y_true) * K.log(1.0 - y_pred);
+           r = -tf.reduce_mean(r * l_ymask[prop] );
+           return r;
        return loss;
-
 
     l_out = [];
     losses = [];
@@ -515,6 +516,8 @@ def buildNetwork():
     encoder = tf.keras.Model([l_in, l_mask], l_encoder);
     encoder.compile(optimizer = 'adam', loss = 'mse');
     encoder.set_weights(np.load("embeddings.npy", allow_pickle = True));
+
+    #encoder.summary();
 
     return mdl, encoder;
 
