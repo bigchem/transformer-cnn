@@ -771,7 +771,10 @@ if __name__ == "__main__":
              res = np.zeros( len(props)); 
 
              for prop in props:
-                res[prop] = np.mean(y[prop]);               
+                if len(props) == 1:
+                   res[prop] = np.mean(y);
+                else:
+                   res[prop] = np.mean(y[prop]);               
                 if props[prop][2] == "regression":
                    res[prop] = (res[prop] - 0.9) / 0.8 * (props[prop][4] - props[prop][3]) + props[prop][4];
                 print(res[prop], end=",", file=fp);
@@ -825,7 +828,11 @@ if __name__ == "__main__":
                       continue;
 
                    for prop in props:
-                      res = y[prop][i][0];
+                      if len (props) == 1:
+                         res = y[i][prop];
+                      else:
+                         res = y[prop][i][0];
+
                       if props[prop][2] == "regression":
                          res = (res - 0.9) / 0.8 * (props[prop][4] - props[prop][3]) + props[prop][4];
                       print(res, end=",", file=fp);
@@ -862,7 +869,7 @@ if __name__ == "__main__":
 
                 for prop in props:
                    if len (props) == 1:
-                      res = y[prop][i];
+                      res = y[i][prop];
                    else:
                       res = y[prop][i][0];
 
