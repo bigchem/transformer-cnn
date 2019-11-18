@@ -50,7 +50,11 @@ AVERAGING = int(getConfig("Details", "averaging", "5"));
 CONV_OFFSET = int(getConfig("Details", "conv-offset", 60));
 FIXED_LEARNING_RATE = getConfig("Details", "fixed-learning-rate", "False");
 
-FIRST_LINE = True
+FIRST_LINE = getConfig("Details", "first-line", "True");
+if FIRST_LINE == "True": 
+   FIRST_LINE = True;
+else:
+   FIRST_LINE = False;
 
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID";
 os.environ["CUDA_VISIBLE_DEVICES"] = DEVICE;
@@ -90,150 +94,6 @@ except:
 np.random.seed(SEED);
 
 props = {};
-
-def calcStatistics(p,y):
-
-   r2 = np.corrcoef(p, y)[0, 1];
-   r2 = r2 * r2;
-
-   press = 0.0;
-   for i in range(len(y)):
-      press += ( p[i] - y[i] ) * ( p[i] - y[i] );
-
-   rmsep = math.sqrt(press / len(y));
-   return r2, rmsep;
-
-def spc_step(data, threshold):
-
-   tn = 0.0;
-   tp = 0.0;
-   fp = 0.0;
-   fn = 0.0;
-
-   for point in data:
-      if(point[1] > 1.0e-3):
-         if(point[0] >= threshold):
-            tp += 1;
-         else:
-            fn += 1;
-      else:
-         if(point[0] < threshold):
-            tn += 1;
-         else:
-            fp += 1;
-
-   if(fp + tn == 0):
-      fpr = 0.0;
-   else:
-      fpr = fp / (fp + tn);
-
-   tpr = tp / (tp + fn);
-   return fpr, tpr;
-
-def spc(data):
-
-   maxh = -sys.float_info.max;
-   minh = +sys.float_info.max;
-
-   x = [];
-   for point in data:
-      x.append(point[0]);
-      if(point[0] > maxh):
-         maxh = point[0];
-      if(point[0] < minh):
-         minh = point[0];
-
-
-   step =  (maxh - minh) / 1000.0;
-
-   h = minh - 0.1 * step + 1e-5;
-
-   spc_data = [];
-
-   prev_fpr = -1.0;
-   prev_tpr = -1.0;
-
-   while (h <= maxh + 0.1* step):
-      fpr, tpr = spc_step(data, h);
-      if(fpr != prev_fpr):
-          spc_data.append((fpr, tpr, h));
-
-      prev_fpr = fpr;
-      prev_tpr = tpr;
-
-      h += step;
-
-   spc_data = sorted(spc_data, key= lambda tup: tup[0]);
-   return spc_data;
-
-def auc(data):
-   S = 0.0;
-
-   x1 = data[0][0];
-   y1 = data[0][1];
-
-   for i in range(1, len(data)):
-      x2 = data[i][0];
-      y2 = data[i][1];
-
-      S += (x2 - x1) * (y1 + y2);
-      x1 = x2;
-      y1 = y2;
-
-   S *= 0.5;
-   return round(S,4);
-
-def optimal_threshold(data):
-
-   ot1 = 0.0;
-   ot2 = 0.0;
-
-   m1 = 10;
-   m2 = -10;
-
-   for point in data:
-      r = point[1] - (1.0 - point[0]);
-      if (r>=0):
-         if(r <= m1):
-            m1 = r;
-            ot1 = point[2];
-      else:
-         if(r > m2):
-            m2 = r;
-            ot2 = point[2];
-
-
-   ot = (ot1 + ot2) / 2.0;
-   return round(ot,5);
-
-def tnt(data, threshold):
-
-   tn = 0;
-   tp = 0;
-   fp = 0;
-   fn = 0;
-
-   for point in data:
-      if(point[1] > 1.0e-3):
-         if(point[0] >= threshold):
-            tp += 1;
-         else:
-            fn += 1;
-      else:
-         if(point[0] < threshold):
-            tn += 1;
-         else:
-            fp += 1;
-
-   return [tp, fp, tn, fn, (tp + tn) / (tp +tn + fp +fn)];
-
-def auc_acc(data):
-   spc_data = spc(data);
-   v_auc = auc(spc_data);
-   v_ot = optimal_threshold(spc_data);
-   v_tnt = tnt(data, v_ot);
-
-   return v_auc, v_tnt[4], v_ot;
 
 class suppress_stderr(object):
    def __init__(self):
@@ -302,6 +162,9 @@ def analyzeDescrFile(fname):
              props[j] = [i, prop];
              j = j + 1;          
           continue;
+       else:
+          props[0] = [1, 'property'];
+          ind_mol = 0;
 
        mol = row[ind_mol].strip();
 
