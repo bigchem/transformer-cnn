@@ -52,6 +52,7 @@ FIXED_LEARNING_RATE = getConfig("Details", "fixed-learning-rate", "False");
 
 FIRST_LINE = True
 
+os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID";
 os.environ["CUDA_VISIBLE_DEVICES"] = DEVICE;
 
 N_HIDDEN = 512;
