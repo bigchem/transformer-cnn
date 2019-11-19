@@ -6,7 +6,9 @@ mkdir test
 cd test 
 rm -rf * 
 
-cp ../embeddings.npy . 
+mkdir pretrained 
+cp -v ../pretrained/* pretrained/
+
 sed '1d' $SMI | shuf | shuf > data
 
 N=`wc -l $SMI | cut -d" " -f1`;

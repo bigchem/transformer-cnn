@@ -10,6 +10,7 @@ import h5py
 import tarfile
 import shutil
 import math
+import random
 
 from rdkit import Chem
 from rdkit.Chem import SaltRemover
@@ -17,7 +18,7 @@ from layers import PositionLayer, MaskLayerLeft, \
                    MaskLayerRight, MaskLayerTriangular, \
                    SelfLayer, LayerNormalization
 
-version = 3;
+version = 4;
 print("Version: ", version);
 
 if(len (sys.argv) != 2):
@@ -49,6 +50,7 @@ EARLY_STOPPING = float(getConfig("Details", "early-sopping", "0.9"));
 AVERAGING = int(getConfig("Details", "averaging", "5"));
 CONV_OFFSET = int(getConfig("Details", "conv-offset", 60));
 FIXED_LEARNING_RATE = getConfig("Details", "fixed-learning-rate", "False");
+RETRAIN = getConfig("Details", "retrain", "False");
 
 FIRST_LINE = getConfig("Details", "first-line", "True");
 if FIRST_LINE == "True": 
@@ -63,6 +65,7 @@ N_HIDDEN = 512;
 N_HIDDEN_CNN = 512;
 EMBEDDING_SIZE = 64;
 KEY_SIZE = EMBEDDING_SIZE;
+n_block, n_self = 3, 10;
 
 #our vocabulary
 chars = " ^#%()+-./0123456789=@ABCDEFGHIKLMNOPRSTVXYZ[\\]abcdefgilmnoprstuy$";
@@ -94,6 +97,7 @@ except:
 np.random.seed(SEED);
 
 props = {};
+canon_pairs = [];
 
 class suppress_stderr(object):
    def __init__(self):
@@ -174,18 +178,39 @@ def analyzeDescrFile(fname):
        if len(g_left) > 0: continue;
 
        arr = [];
+       canon = "";
+
        try:
           if CANONIZE == 'True':
              with suppress_stderr():
                 m = Chem.MolFromSmiles(mol);
                 m = remover.StripMol(m);
+
+                if m is not None:
+                   canon = Chem.MolToSmiles(m);
+
                 if m is not None and m.GetNumAtoms() > 0:
                    for step in range(10):
-                      arr.append(Chem.MolToSmiles(m, rootedAtAtom = np.random.randint(0, m.GetNumAtoms()), canonical = False));
+                      rsm = Chem.MolToSmiles(m, rootedAtAtom = np.random.randint(0, m.GetNumAtoms()), canonical = False);
+                      arr.append(rsm);
+                      if RETRAIN == "True" and canon != "":
+                         canon_pairs.append([rsm, canon]);
                 else:
                    arr.append(mol);
+
+                   if RETRAIN == "True" and canon != "":
+                      canon_pairs.append([mol, canon]);
+
           else:
+
              arr.append(mol);
+             m = Chem.MolFromSmiles(mol);
+             if m is not None:
+                canon = Chem.MolToSmiles(m);
+             
+             if RETRAIN == "True" and canon != "":
+                canon_pairs.append([mol, canon]);
+
        except:
           arr.append(mol);
 
@@ -269,7 +294,6 @@ def data_generator(ds):
 def buildNetwork():
 
     unfreeze = False;
-    n_block, n_self = 3, 10;
 
     l_in = layers.Input( shape= (None,));
     l_mask = layers.Input( shape= (None,));
@@ -385,6 +409,163 @@ def buildNetwork():
 
     return mdl, encoder;
 
+#Transformer Model for canonization task
+
+def Smi2Smi():
+
+    #product
+    l_in = layers.Input( shape= (None,));
+    l_mask = layers.Input( shape= (None,));
+
+    #reagents
+    l_dec = layers.Input(shape =(None,)) ;
+    l_dmask = layers.Input(shape =(None,));
+
+    #positional encodings for product and reagents, respectively
+    l_pos = PositionLayer(EMBEDDING_SIZE)(l_mask);
+    l_dpos = PositionLayer(EMBEDDING_SIZE)(l_dmask);
+
+    l_emask = MaskLayerRight()([l_dmask, l_mask]);
+    l_right_mask = MaskLayerTriangular()(l_dmask);
+    l_left_mask = MaskLayerLeft()(l_mask);
+
+    #encoder
+    l_voc = layers.Embedding(input_dim = vocab_size, output_dim = EMBEDDING_SIZE, input_length = None);
+
+    l_embed = layers.Add()([ l_voc(l_in), l_pos]);
+    l_embed = layers.Dropout(rate = 0.1)(l_embed);
+
+    for layer in range(n_block):
+
+       #self attention
+       l_o = [ SelfLayer(EMBEDDING_SIZE, KEY_SIZE) ([l_embed, l_embed, l_embed, l_left_mask]) for i in range(n_self)];
+
+       l_con = layers.Concatenate()(l_o);
+       l_dense = layers.TimeDistributed(layers.Dense(EMBEDDING_SIZE)) (l_con);
+       l_drop = layers.Dropout(rate=0.1)(l_dense);
+       l_add = layers.Add()( [l_drop, l_embed]);
+       l_att = LayerNormalization()(l_add);
+
+       #position-wise
+       l_c1 = layers.Conv1D(N_HIDDEN, 1, activation='relu')(l_att);
+       l_c2 = layers.Conv1D(EMBEDDING_SIZE, 1)(l_c1);
+       l_drop = layers.Dropout(rate = 0.1)(l_c2);
+       l_ff = layers.Add()([l_att, l_drop]);
+       l_embed = LayerNormalization()(l_ff);
+
+    #bottleneck
+    l_encoder = l_embed;
+
+    l_embed = layers.Add()([l_voc(l_dec), l_dpos]);
+    l_embed = layers.Dropout(rate = 0.1)(l_embed);
+
+    for layer in range(n_block):
+
+       #self attention
+       l_o = [ SelfLayer(EMBEDDING_SIZE, KEY_SIZE)([l_embed, l_embed, l_embed, l_right_mask]) for i in range(n_self)];
+
+       l_con = layers.Concatenate()(l_o);
+       l_dense = layers.TimeDistributed(layers.Dense(EMBEDDING_SIZE)) (l_con);
+       l_drop = layers.Dropout(rate=0.1)(l_dense);
+       l_add = layers.Add()( [l_drop, l_embed]);
+       l_att = LayerNormalization()(l_add);
+
+       #attention to the encoder
+       l_o = [ SelfLayer(EMBEDDING_SIZE, KEY_SIZE)([l_att, l_encoder, l_encoder, l_emask]) for i in range(n_self)];
+       l_con = layers.Concatenate()(l_o);
+       l_dense = layers.TimeDistributed(layers.Dense(EMBEDDING_SIZE)) (l_con);
+       l_drop = layers.Dropout(rate=0.1)(l_dense);
+       l_add = layers.Add()( [l_drop, l_att]);
+       l_att = LayerNormalization()(l_add);
+
+       #position-wise
+       l_c1 = layers.Conv1D(N_HIDDEN, 1, activation='relu')(l_att);
+       l_c2 = layers.Conv1D(EMBEDDING_SIZE, 1)(l_c1);
+       l_drop = layers.Dropout(rate = 0.1)(l_c2);
+       l_ff = layers.Add()([l_att, l_drop]);
+       l_embed = LayerNormalization()(l_ff);
+
+    l_out = layers.TimeDistributed(layers.Dense(vocab_size,
+                                          use_bias=False)) (l_embed);
+
+    mdl = tf.keras.Model([l_in, l_mask, l_dec, l_dmask], l_out);
+
+    def masked_loss(y_true, y_pred):
+       loss = tf.nn.softmax_cross_entropy_with_logits_v2(labels=y_true, logits=y_pred);
+       mask = tf.cast(tf.not_equal(tf.reduce_sum(y_true, -1), 0), 'float32');
+       loss = tf.reduce_sum(loss * mask, -1) / tf.reduce_sum(mask, -1);
+       loss = K.mean(loss);
+       return loss;
+
+    def masked_acc(y_true, y_pred):
+       mask = tf.cast(tf.not_equal(tf.reduce_sum(y_true, -1), 0), 'float32');
+       eq = K.cast(K.equal(K.argmax(y_true, axis=-1), K.argmax(y_pred, axis = -1)), 'float32');
+       eq = tf.reduce_sum(eq * mask, -1) / tf.reduce_sum(mask, -1);
+       eq = K.mean(eq);
+       return eq;
+
+    mdl.compile(optimizer = 'adam', loss = masked_loss, metrics=['accuracy', masked_acc]);
+    
+    mdl_enc = tf.keras.Model([l_in, l_mask], l_encoder);
+    mdl_enc.compile(optimizer="adam", loss="categorical_crossentropy");
+
+    #mdl.summary();
+
+    return mdl, mdl_enc;
+
+def smi_gen_data(data):
+
+    batch_size = len(data);
+
+    #search for max lengths
+    left = [];
+    right = [];
+    for line in data:
+       left.append ( line[0].strip());
+       right.append ( line[1].strip() );
+
+    nl = len(left[0]);
+    nr = len(right[0]);
+    for i in range(1, batch_size, 1):
+        nl_a = len(left[i]);
+        nr_a = len(right[i]);
+        if nl_a > nl:
+            nl = nl_a;
+        if nr_a > nr:
+            nr = nr_a;
+
+    #add start and end symbols
+    nl += 2;
+    nr += 1;
+
+    #products
+    x = np.zeros((batch_size, nl), np.int8);
+    mx = np.zeros((batch_size, nl), np.int8);
+
+    #reactants
+    y = np.zeros((batch_size, nr), np.int8);
+    my = np.zeros((batch_size, nr), np.int8);
+
+    #for output
+    z = np.zeros((batch_size, nr, vocab_size), np.int8);
+
+    for cnt in range(batch_size):
+        product = "^" + left[cnt] + "$";
+        reactants = "^" + right[cnt];
+
+        reactants += "$";
+        for i, p in enumerate(product):
+           x[cnt, i] = char_to_ix[ p] ;
+
+        mx[cnt, :i+1] = 1;
+        for i in range( (len(reactants) -1) ):
+           y[cnt, i] = char_to_ix[ reactants[i]];
+           z[cnt, i, char_to_ix[ reactants[i + 1] ]] = 1;
+
+        my[cnt, :i+1] =1;
+
+    return [x, mx, y, my], z;
+
 
 if __name__ == "__main__":
 
@@ -394,6 +575,83 @@ if __name__ == "__main__":
         print("Analyze training file...");
 
         DS = analyzeDescrFile(TRAIN_FILE);
+
+        if len(canon_pairs) > 0:
+           random.shuffle(canon_pairs);
+           
+           smi2smi, smi_encoder = Smi2Smi();
+           smi2smi.load_weights("pretrained/canonization.h5");
+
+           epochs_to_save = [6,7,8,9];
+           smi_batch = 32;
+
+           class GenCallback(tf.keras.callbacks.Callback):
+              def __init__(self, eps=1e-6, **kwargs):
+                 self.steps = 0;
+                 self.warm = 16000;
+                 self.steps = self.warm + 30;
+              def on_batch_begin(self, batch, logs={}):
+                 self.steps += 1;
+                 lr = 20.0 * min(1.0, self.steps / self.warm) / max(self.steps, self.warm);
+                 K.set_value(self.model.optimizer.lr, lr)
+              def on_epoch_end(self, epoch, logs={}):
+                 if epoch in epochs_to_save:
+                    smi2smi.save_weights("tr-" + str(epoch) + ".h5", save_format="h5");    
+
+           def smi2smi_generator():
+              lines = [];
+              while True:
+                 for i in range(len(canon_pairs)):
+                    if len(lines) == smi_batch:
+                       yield smi_gen_data(lines);
+                       lines = [];
+                    lines.append(canon_pairs[i]);
+
+           callback = [ GenCallback() ];
+           history = smi2smi.fit_generator( generator = smi2smi_generator(),
+                                     steps_per_epoch = int(math.ceil(len(canon_pairs) / smi_batch)),
+                                     epochs = 10,
+                                     use_multiprocessing=False,
+                                     shuffle = True,
+                                     callbacks = callback);
+
+           print("Averaging weights");
+           f = [];
+
+           for i in epochs_to_save:
+              f.append(h5py.File("tr-" + str(i) + ".h5", "r+"));
+
+           keys = list(f[0].keys());
+           for key in keys:
+              groups = list(f[0][key]);
+              if len(groups):
+                 for group in groups:
+                    items = list(f[0][key][group].keys());
+                    for item in items:
+                       data = [];
+                       for i in range(len(f)):
+                          data.append(f[i][key][group][item]);
+                       avg = np.mean(data, axis = 0);
+                       del f[0][key][group][item];
+                       f[0][key][group].create_dataset(item, data=avg);
+           for fp in f:
+              fp.close();
+
+           for i in epochs_to_save[1:]:
+              os.remove("tr-" + str(i) + ".h5");
+           os.rename("tr-" + str(epochs_to_save[0]) + ".h5", "final.h5");
+           
+           #extract embeddings 
+           smi2smi.load_weights("final.h5");
+           w = smi_encoder.get_weights();        
+           np.save("embeddings.npy", w);
+           os.remove("final.h5");
+
+        else:        
+           shutil.copy("pretrained/embeddings.npy", "embeddings.npy");
+
+        #end of pretraining
+
         mdl, encoder = buildNetwork();
  
         nall = len(DS);
@@ -563,6 +821,7 @@ if __name__ == "__main__":
         tar = tarfile.open(MODEL_FILE, "w:gz");
         tar.add("model.pkl");
         tar.add("model.h5");
+        tar.add("embeddings.npy");
         tar.close();
 
         if EARLY_STOPPING > 0:
@@ -570,6 +829,7 @@ if __name__ == "__main__":
 
         os.remove("model.pkl");
         os.remove("model.h5");
+        os.remove("embeddings.npy");
 
     elif TRAIN == "False":
 
@@ -578,6 +838,9 @@ if __name__ == "__main__":
        tar.close();
 
        props = pickle.load( open( "model.pkl", "rb" ));
+
+
+       print(props);
 
        mdl, encoder = buildNetwork();
        mdl.load_weights("model.h5");
@@ -749,6 +1012,7 @@ if __name__ == "__main__":
 
        os.remove("model.pkl");
        os.remove("model.h5");
-
+       os.remove("embeddings.npy");
 
     print("Relax!");
+
