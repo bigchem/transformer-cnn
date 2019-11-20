@@ -51,6 +51,7 @@ AVERAGING = int(getConfig("Details", "averaging", "5"));
 CONV_OFFSET = int(getConfig("Details", "conv-offset", 60));
 FIXED_LEARNING_RATE = getConfig("Details", "fixed-learning-rate", "False");
 RETRAIN = getConfig("Details", "retrain", "False");
+CHIRALITY = getConfig("Details", "chirality", "True");
 
 FIRST_LINE = getConfig("Details", "first-line", "True");
 if FIRST_LINE == "True": 
@@ -580,7 +581,11 @@ if __name__ == "__main__":
            random.shuffle(canon_pairs);
            
            smi2smi, smi_encoder = Smi2Smi();
-           smi2smi.load_weights("pretrained/canonization.h5");
+
+           if CHIRALITY == "True":
+              smi2smi.load_weights("pretrained/canonization.h5");
+           else:
+              smi2smi.load_weights("pretrained/canonization-nochiral.h5");
 
            epochs_to_save = [6,7,8,9];
            smi_batch = 32;
@@ -648,7 +653,10 @@ if __name__ == "__main__":
            os.remove("final.h5");
 
         else:        
-           shutil.copy("pretrained/embeddings.npy", "embeddings.npy");
+           if CHIRALITY == "True":
+              shutil.copy("pretrained/embeddings.npy", "embeddings.npy");
+           else:
+              shutil.copy("pretrained/embeddings-nochiral.npy", "embeddings.npy");
 
         #end of pretraining
 
@@ -838,9 +846,6 @@ if __name__ == "__main__":
        tar.close();
 
        props = pickle.load( open( "model.pkl", "rb" ));
-
-
-       print(props);
 
        mdl, encoder = buildNetwork();
        mdl.load_weights("model.h5");
