@@ -2,6 +2,9 @@
 
 results.csv
 model.tar
+standalone/lrp.pdf
+standalone/map.txt
+standalone/mol.svg
 
 model/
 test/
