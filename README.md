@@ -3,7 +3,6 @@
 The repository contains the source code for a new Transformer-CNN method described in our paper http://arxiv.org/abs/1911.06603. First, we trained the Transformer model on SMILES canonicalization task, e.g., given an arbitrary SMILES, the model converts it to a canonical one. Second, we use the internal representation of the Transformer (the output of the encoding stack with shape (BATCH, LENGTH, EMBEDDING)) as SMILES embeddings and build upon them CharNN model (Convolution and HighWay as it is done in DeepChem). The resulting model works both in classification and regression settings.
 
 The "standalone" folder provides the implementation of the Transformer-CNN model for prognosis without TensorFlow (depends on only NumPy and RDKit). The solubility and AMES models are available. [Layerwise Relevance Propagation method](https://link.springer.com/chapter/10.1007/978-3-030-28954-6_10) is used to infer the model's reasoning behind a particular prediction.
-Feel free to contact us if you have any suggestions or possible applications of this code.
 
 # Dependencies
 
@@ -53,11 +52,11 @@ To use a model, the config file looks like:
 
 # Using the standalone prognosis
 
-Standalone folder contains scripts and models for execution without tensorflow. Solubility regression and AMES classification models are available. To run a prognosis for a single molecule ([haloperidol](https://www.drugbank.ca/drugs/DB00502) here as an example) execute:
+The "standalone" folder contains scripts and models for execution without TensorFlow. Solubility regression and AMES classification models are available. To run a prognosis for a single molecule ([haloperidol](https://www.drugbank.ca/drugs/DB00502) here as an example) execute:
 
 python3 ochem.py models/solubility.pickle "O=C(CCCN1CCC(c2ccc(Cl)cc2)(O)CC1)c1ccc(F)cc1"
 
-In this case the program produces 26 random SMILES (number of atoms in the molecule) starting from every non-hydrogen atom in the original SMILES. For each SMILES a target property is predicted as well as influences of a particular atom to the overall property. The output contains:
+In this case, the program produces 26 random SMILES (number of non-hydrogens atoms in the molecule) starting from each atom in the original SMILES. For each SMILES a target property is predicted as well as influences of a particular atom to the overall property. The output contains:
 
 1. the estimated property with confidence interval.
 2. file map.txt contains a gnuplot script to visualize the individual atoms' contributions.
@@ -73,4 +72,5 @@ And visualization:
 
 The green color contributes positively to the property. The higher the bar the more the impact of the corresponding atom. The red color works in the opposite direction.
 
+Feel free to contact us if you have any suggestions or possible applications of this code.
 
