@@ -69,3 +69,9 @@ For haloperidol molecule the outpus should be:
 Solubility = 0.014 ± 0.002 g/L (experimental value 14 mg/L).
 
 And visualization:
+
+![LRP graph](https://github.com/bigchem/transformer-cnn/blob/master/standalone/lrp/lrp.png)
+
+The green color contributes positive to the property. The higher the bar the more the corresponding atom contributes. The red color works in the opposite direction.
+
+
