@@ -58,9 +58,9 @@ python3 ochem.py models/solubility.pickle "O=C(CCCN1CCC(c2ccc(Cl)cc2)(O)CC1)c1cc
 
 In this case, the program produces 26 random SMILES (number of non-hydrogens atoms in the molecule) starting from each atom in the original SMILES. For each SMILES a target property is predicted as well as influences of a particular atom to the overall property. The output contains:
 
-1. the estimated property with confidence interval.
-2. file map.txt contains a gnuplot script to visualize the individual atoms' contributions.
-3. file mol.svg contains a drawing of the molecule with atoms' contributions.
+1. the estimated property with a confidence interval.
+2. the file map.txt contains a gnuplot script to visualize the individual atoms' contributions.
+3. the file mol.svg contains a drawing of the molecule with atoms' contributions.
 
 For haloperidol molecule the outpus should be:
 
