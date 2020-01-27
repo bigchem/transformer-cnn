@@ -48,7 +48,6 @@ CANONIZE = getConfig("Details","canonize");
 DEVICE = getConfig("Details","gpu");
 EARLY_STOPPING = float(getConfig("Details", "early-sopping", "0.9"));
 AVERAGING = int(getConfig("Details", "averaging", "5"));
-CONV_OFFSET = int(getConfig("Details", "conv-offset", 60));
 FIXED_LEARNING_RATE = getConfig("Details", "fixed-learning-rate", "False");
 RETRAIN = getConfig("Details", "retrain", "False");
 CHIRALITY = getConfig("Details", "chirality", "True");
@@ -62,6 +61,7 @@ else:
 os.environ["CUDA_DEVICE_ORDER"] = "PCI_BUS_ID";
 os.environ["CUDA_VISIBLE_DEVICES"] = DEVICE;
 
+CONV_OFFSET = 20;
 N_HIDDEN = 512;
 N_HIDDEN_CNN = 512;
 EMBEDDING_SIZE = 64;
@@ -266,11 +266,9 @@ def gen_data(data):
         for i in range(n):
            x[cnt, i] = char_to_ix[ data[cnt][0][i]] ;
 
-        #periodic
         for i, k in enumerate(range(n, nl)):
            x[cnt, k] = x[cnt, i];
-        #mx[cnt, :i+1] = 1;
-        mx[cnt] = 1;
+        mx[cnt, :i+1] = 1;
 
         for i in range(len(props)):
            z[i][cnt] = data[cnt][1][i];

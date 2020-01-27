@@ -24,7 +24,9 @@ class PositionLayer(tf.keras.layers.Layer):
       odds = K.cos(odds)[1:, :];
 
       pos = K.reshape(K.stack([evens, odds], axis=2), (-1, K.shape(x)[1], self.embedding_size));
-      return pos;
+      y = K.expand_dims(x, axis=-1);
+
+      return pos * y;
 
    def compute_output_shape(self, input_shape):
       return input_shape + (self.embedding_size,);
