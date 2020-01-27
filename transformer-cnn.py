@@ -54,7 +54,7 @@ RETRAIN = getConfig("Details", "retrain", "False");
 CHIRALITY = getConfig("Details", "chirality", "True");
 
 FIRST_LINE = getConfig("Details", "first-line", "True");
-if FIRST_LINE == "True": 
+if FIRST_LINE == "True":
    FIRST_LINE = True;
 else:
    FIRST_LINE = False;
@@ -161,11 +161,11 @@ def analyzeDescrFile(fname):
           first_row = False;
           j = 0;
           for i, prop in enumerate(row):
-             if prop == "smiles": 
+             if prop == "smiles":
                 ind_mol = i;
                 continue;
              props[j] = [i, prop];
-             j = j + 1;          
+             j = j + 1;
           continue;
        else:
           props[0] = [1, 'property'];
@@ -208,7 +208,7 @@ def analyzeDescrFile(fname):
              m = Chem.MolFromSmiles(mol);
              if m is not None:
                 canon = Chem.MolToSmiles(m);
-             
+
              if RETRAIN == "True" and canon != "":
                 canon_pairs.append([mol, canon]);
 
@@ -223,16 +223,16 @@ def analyzeDescrFile(fname):
            icsv = props[prop][0];
            s = row[icsv].strip();
            if s == '':
-              val = 0;              
+              val = 0;
            else:
               val = float(s);
               mask[idx] = 1;
-           vals[idx] = val;      
+           vals[idx] = val;
 
        arr = list(set(arr));
        for step in range(len(arr)):
           DS.append( [ arr[step], np.copy(vals), mask ]);
-  
+
     findBoundaries(DS);
 
     return DS;
@@ -255,7 +255,7 @@ def gen_data(data):
 
     z = [];
     ym = [];
- 
+
     for i in range(len(props)):
        z.append(np.zeros((batch_size, 1), np.float32));
        ym.append(np.zeros((batch_size, 1), np.int8));
@@ -265,14 +265,19 @@ def gen_data(data):
         n = len(data[cnt][0]);
         for i in range(n):
            x[cnt, i] = char_to_ix[ data[cnt][0][i]] ;
-        mx[cnt, :i+1] = 1;
 
-        for i in range(len(props)):    
+        #periodic
+        for i, k in enumerate(range(n, nl)):
+           x[cnt, k] = x[cnt, i];
+        #mx[cnt, :i+1] = 1;
+        mx[cnt] = 1;
+
+        for i in range(len(props)):
            z[i][cnt] = data[cnt][1][i];
-           ym[i][cnt ] = data[cnt][2][i]; 
+           ym[i][cnt ] = data[cnt][2][i];
 
     d = [x, mx];
-  
+
     for i in range(len(props)):
        d.extend([ym[i]]);
 
@@ -298,7 +303,7 @@ def buildNetwork():
 
     l_in = layers.Input( shape= (None,));
     l_mask = layers.Input( shape= (None,));
- 
+
     l_ymask = [];
     for i in range(len(props)):
        l_ymask.append( layers.Input( shape=(1, )));
@@ -390,10 +395,10 @@ def buildNetwork():
        else:
           l_out.append(layers.Dense(1, activation='sigmoid', name="Classification-" + props[prop][1]) (l_highway));
           losses.append(binary_loss(prop));
- 
+
     l_input = [l_in2];
     l_input.extend(l_ymask);
- 
+
     mdl = tf.keras.Model(l_input, l_out);
     mdl.compile (optimizer = 'adam', loss = losses);
 
@@ -506,7 +511,7 @@ def Smi2Smi():
        return eq;
 
     mdl.compile(optimizer = 'adam', loss = masked_loss, metrics=['accuracy', masked_acc]);
-    
+
     mdl_enc = tf.keras.Model([l_in, l_mask], l_encoder);
     mdl_enc.compile(optimizer="adam", loss="categorical_crossentropy");
 
@@ -579,7 +584,7 @@ if __name__ == "__main__":
 
         if len(canon_pairs) > 0:
            random.shuffle(canon_pairs);
-           
+
            smi2smi, smi_encoder = Smi2Smi();
 
            if CHIRALITY == "True":
@@ -601,7 +606,7 @@ if __name__ == "__main__":
                  K.set_value(self.model.optimizer.lr, lr)
               def on_epoch_end(self, epoch, logs={}):
                  if epoch in epochs_to_save:
-                    smi2smi.save_weights("tr-" + str(epoch) + ".h5", save_format="h5");    
+                    smi2smi.save_weights("tr-" + str(epoch) + ".h5", save_format="h5");
 
            def smi2smi_generator():
               lines = [];
@@ -645,14 +650,14 @@ if __name__ == "__main__":
            for i in epochs_to_save[1:]:
               os.remove("tr-" + str(i) + ".h5");
            os.rename("tr-" + str(epochs_to_save[0]) + ".h5", "final.h5");
-           
-           #extract embeddings 
+
+           #extract embeddings
            smi2smi.load_weights("final.h5");
-           w = smi_encoder.get_weights();        
+           w = smi_encoder.get_weights();
            np.save("embeddings.npy", w);
            os.remove("final.h5");
 
-        else:        
+        else:
            if CHIRALITY == "True":
               shutil.copy("pretrained/embeddings.npy", "embeddings.npy");
            else:
@@ -661,7 +666,7 @@ if __name__ == "__main__":
         #end of pretraining
 
         mdl, encoder = buildNetwork();
- 
+
         nall = len(DS);
         print("Number of all points: ", nall);
 
@@ -703,7 +708,8 @@ if __name__ == "__main__":
            DSC_VALID = [];
 
            #calculate "descriptors"
-           for x, y in train_generator:             
+           for x, y in train_generator:
+    
               z = encoder.predict([x[0], x[1]]);
               d = [z];
               for i in range(len(props)):
@@ -857,7 +863,7 @@ if __name__ == "__main__":
        for prop in props:
           print(props[prop][1], end=",", file=fp);
        print("", file=fp);
- 
+
        ind_mol = 0;
 
        if CANONIZE == 'True':
@@ -870,7 +876,7 @@ if __name__ == "__main__":
              mol = row[ind_mol];
              g_mol = set(mol);
              g_left = g_mol - g_chars;
- 
+
              arr = [];
              if len(g_left) == 0:
                 try:
@@ -894,27 +900,27 @@ if __name__ == "__main__":
              d= [];
              for i in range(len(arr)):
                 d.append( [arr[i], z, ymask]);
-               
-             x, y = gen_data(d);            
-             internal = encoder.predict( [x[0], x[1]]); 
+
+             x, y = gen_data(d);
+             internal = encoder.predict( [x[0], x[1]]);
 
              p = [internal];
              for i in range(len(props)):
                  p.extend([x[i+2]]);
 
              y = mdl.predict( p );
-             res = np.zeros( len(props)); 
+             res = np.zeros( len(props));
 
              for prop in props:
                 if len(props) == 1:
                    res[prop] = np.mean(y);
                 else:
-                   res[prop] = np.mean(y[prop]);               
+                   res[prop] = np.mean(y[prop]);
                 if props[prop][2] == "regression":
                    res[prop] = (res[prop] - 0.9) / 0.8 * (props[prop][4] - props[prop][3]) + props[prop][4];
                 print(res[prop], end=",", file=fp);
              print("", file=fp);
-                          
+
        else:
 
           arr = [];
@@ -937,23 +943,23 @@ if __name__ == "__main__":
                 arr.append("CC");
 
              if (len(arr) == BATCH_SIZE):
-      
+
                 z = np.zeros(len(props), dtype=np.float32);
                 ymask = np.ones(len(props), dtype=np.int8);
 
                 d= [];
                 for i in range(len(arr)):
                    d.append( [arr[i], z, ymask]);
-               
-                x, y = gen_data(d);            
-                internal = encoder.predict( [x[0], x[1]]); 
+
+                x, y = gen_data(d);
+                internal = encoder.predict( [x[0], x[1]]);
 
                 p = [internal];
                 for i in range(len(props)):
                    p.extend([x[i+2]]);
 
                 y = mdl.predict( p );
-                res = np.zeros( len(props)); 
+                res = np.zeros( len(props));
 
                 for i in range(len(arr)):
                    if e[i] == 0:
@@ -972,7 +978,7 @@ if __name__ == "__main__":
                          res = (res - 0.9) / 0.8 * (props[prop][4] - props[prop][3]) + props[prop][4];
                       print(res, end=",", file=fp);
                    print("", file=fp);
- 
+
                 arr = [];
                 e = [];
 
@@ -984,16 +990,16 @@ if __name__ == "__main__":
              d= [];
              for i in range(len(arr)):
                 d.append( [arr[i], z, ymask]);
-               
-             x, y = gen_data(d);            
-             internal = encoder.predict( [x[0], x[1]]); 
+
+             x, y = gen_data(d);
+             internal = encoder.predict( [x[0], x[1]]);
 
              p = [internal];
              for i in range(len(props)):
                 p.extend([x[i+2]]);
 
              y = mdl.predict( p );
-             res = np.zeros( len(props)); 
+             res = np.zeros( len(props));
 
              for i in range(len(arr)):
                 if e[i] == 0:
@@ -1020,4 +1026,3 @@ if __name__ == "__main__":
        os.remove("embeddings.npy");
 
     print("Relax!");
-
