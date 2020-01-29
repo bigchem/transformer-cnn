@@ -44,7 +44,7 @@ def LRPCheck(label, x, val):
        print(label, "NaN");
        sys.exit(0);
  
-    print("{:25}|{:15.5f}  |{:15.5f}  |{:15.5f}%   |".format( label, s, v - s, (v-s)/v*100.0));
+    print("{:25}|{:15.5f}  |{:15.5g}  |{:15.5g}%   | ".format( label, s, v - s, (v-s)/v*100.));
 
 def calcLRPDenseOut(l_previous, w, l_next):
     zij = np.transpose(w[0]) * np.reshape(l_previous, (1, -1));
@@ -122,7 +122,7 @@ d = pickle.load(open(sys.argv[1], "rb"));
 info = d[0];
 d = d[1];
 
-def calcSolubility(ch, atom, MolWt, doLrp = True):
+def calcQSAR(ch, atom, MolWt, doLrp = True):
 
    mol = Chem.MolToSmiles(ch, rootedAtAtom = atom, canonical = False, doRandom = False);
    
@@ -512,15 +512,15 @@ def calcSolubility(ch, atom, MolWt, doLrp = True):
    LRPCheck("HighWay Output:", R_highway, l_out);
 
    R_identity, R_transformed_gated = calcLRPAddition(identity_gated, transformed_gated, l_highway, R_highway);
-   LRPCheck("Identity Gated:", [R_identity, R_transformed_gated], l_out);
+   #LRPCheck("Identity Gated:", [R_identity, R_transformed_gated], R_highway);
 
    R_dense_high3 = calcLRPDenseInner(l_dense, [d[149], d[150]], R_transformed_gated);
    R_input_highway = R_identity + R_dense_high3; # + R_dense_high21 + R_dense_high22 + R_dense_high3;
 
-   LRPCheck("Input HighWay:", R_input_highway, l_out);
+   LRPCheck("Input HighWay:", R_input_highway, R_highway);
 
    R_cnn = calcLRPDenseInner(l_cnn, [d[145], d[146]], R_input_highway);
-   LRPCheck("CNN concat:", R_cnn, l_out);
+   #LRPCheck("CNN concat:", R_cnn, l_out);
 
    #concatenation
    R_cnn_1 = R_cnn[:100];
@@ -550,7 +550,7 @@ def calcSolubility(ch, atom, MolWt, doLrp = True):
    d_15 = calcLRPPool(l_embed, max_15, R_cnn_15);
    d_20 = calcLRPPool(l_embed, max_20, R_cnn_20);
 
-   LRPCheck("DeMaxPool:", [d_1, d_2, d_3, d_4, d_5, d_6, d_7, d_8, d_9, d_10, d_15, d_20], l_out);
+   LRPCheck("DeMaxPool:", [d_1, d_2, d_3, d_4, d_5, d_6, d_7, d_8, d_9, d_10, d_15, d_20], R_input_highway);
 
    print("Char-CNN block:");
 
@@ -613,7 +613,7 @@ impacts = np.zeros(num_atoms, dtype=np.float32);
 labels = [ m.GetAtomWithIdx(i).GetSymbol().upper() for i in range(num_atoms) ];
 
 for atom in range(num_atoms):
-   val, scores, bias = calcSolubility(m, atom, MolWt);
+   val, scores, bias = calcQSAR(m, atom, MolWt);
    vals.append(val);
    impacts[atom] = scores[0];
 
