@@ -293,7 +293,7 @@ def data_generator(ds):
       if len(data) > 0:
          yield gen_data(data);
          data = [];
-      raise StopIteration();
+      return
 
 def buildNetwork():
 
