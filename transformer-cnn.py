@@ -265,9 +265,6 @@ def gen_data(data):
         n = len(data[cnt][0]);
         for i in range(n):
            x[cnt, i] = char_to_ix[ data[cnt][0][i]] ;
-
-        for i, k in enumerate(range(n, nl)):
-           x[cnt, k] = x[cnt, i];
         mx[cnt, :i+1] = 1;
 
         for i in range(len(props)):
@@ -293,6 +290,7 @@ def data_generator(ds):
       if len(data) > 0:
          yield gen_data(data);
          data = [];
+      raise StopIteration();
       return
 
 def buildNetwork():
