@@ -285,12 +285,17 @@ def data_generator(ds):
       for i in range(len(ds)):
          data.append( ds[i] );
          if len(data) == BATCH_SIZE:
+            try:
+               yield gen_data(data);
+               data = [];
+            except StopIteration:
+               return
+      if len(data) > 0:
+         try:
             yield gen_data(data);
             data = [];
-      if len(data) > 0:
-         yield gen_data(data);
-         data = [];
-      raise StopIteration();
+         except StopIteration:
+            return
       return
 
 def buildNetwork():
